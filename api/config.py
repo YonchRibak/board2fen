@@ -2,16 +2,35 @@
 
 import os
 from pathlib import Path
-from typing import List
-from pydantic_settings import BaseSettings
 from pydantic import Field
+from pydantic_settings import BaseSettings, SettingsConfigDict
+
+# Immutable defaults (tuples) to avoid "mutable default" IDE warnings
+DEFAULT_CORS_ORIGINS = ("*",)
+DEFAULT_CORS_METHODS = ("*",)
+DEFAULT_CORS_HEADERS = ("*",)
+DEFAULT_PIECE_CLASSES = (
+    "black_bishop", "black_king", "black_knight", "black_pawn",
+    "black_queen", "black_rook", "white_bishop", "white_king",
+    "white_knight", "white_pawn", "white_queen", "white_rook",
+)
+DEFAULT_IMAGE_FORMATS = ("jpg", "jpeg", "png", "bmp")
 
 
 class Settings(BaseSettings):
+    # Pydantic v2 settings config
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        env_file_encoding="utf-8",
+        case_sensitive=False,
+    )
+
     # API Settings
     app_name: str = "Chess Board to FEN API"
     app_version: str = "1.0.0"
-    app_description: str = "Convert chess board images to FEN notation using computer vision and deep learning"
+    app_description: str = (
+        "Convert chess board images to FEN notation using computer vision and deep learning"
+    )
 
     api_host: str = Field(default="0.0.0.0")
     api_port: int = Field(default=8000)
@@ -22,11 +41,11 @@ class Settings(BaseSettings):
     redoc_url: str = "/redoc"
     openapi_url: str = "/openapi.json"
 
-    # CORS
-    cors_origins: List[str] = Field(default=["*"])
+    # CORS (use tuples for immutability; convert to list at usage sites if required)
+    cors_origins: tuple[str, ...] = Field(default=DEFAULT_CORS_ORIGINS)
     cors_allow_credentials: bool = True
-    cors_allow_methods: List[str] = ["*"]
-    cors_allow_headers: List[str] = ["*"]
+    cors_allow_methods: tuple[str, ...] = Field(default=DEFAULT_CORS_METHODS)
+    cors_allow_headers: tuple[str, ...] = Field(default=DEFAULT_CORS_HEADERS)
 
     # Database
     database_url: str = Field(default="sqlite:///./chess_predictions.db")
@@ -39,15 +58,11 @@ class Settings(BaseSettings):
     model_input_width: int = Field(default=224)
     model_input_height: int = Field(default=224)
 
-    piece_classes: List[str] = Field(default=[
-        'black_bishop', 'black_king', 'black_knight', 'black_pawn',
-        'black_queen', 'black_rook', 'white_bishop', 'white_king',
-        'white_knight', 'white_pawn', 'white_queen', 'white_rook'
-    ])
+    piece_classes: tuple[str, ...] = Field(default=DEFAULT_PIECE_CLASSES)
 
     # Image Processing
     max_image_size_mb: float = Field(default=10.0)
-    supported_image_formats: List[str] = Field(default=['jpg', 'jpeg', 'png', 'bmp'])
+    supported_image_formats: tuple[str, ...] = Field(default=DEFAULT_IMAGE_FORMATS)
     min_image_dimension: int = Field(default=100)
     image_storage_quality: int = Field(default=85)
 
@@ -64,7 +79,7 @@ class Settings(BaseSettings):
     rate_limit_requests_per_minute: int = Field(default=100)
 
     @property
-    def model_input_size(self) -> tuple:
+    def model_input_size(self) -> tuple[int, int]:
         return (self.model_input_width, self.model_input_height)
 
     @property
@@ -88,11 +103,6 @@ class Settings(BaseSettings):
             return model_path
         return Path(__file__).parent.parent / model_path
 
-    class Config:
-        env_file = ".env"
-        env_file_encoding = "utf-8"
-        case_sensitive = False
-
 
 class DevelopmentSettings(Settings):
     debug: bool = True
@@ -104,7 +114,7 @@ class ProductionSettings(Settings):
     debug: bool = False
     reload: bool = False
     log_level: str = "INFO"
-    cors_origins: List[str] = []
+    cors_origins: tuple[str, ...] = Field(default=())  # lock down in prod
     rate_limit_enabled: bool = True
 
 
