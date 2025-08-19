@@ -1,8 +1,7 @@
 import os
 os.environ['TF_ENABLE_ONEDNN_OPTS'] = '0'
 
-from piece_classifier.dataset_utils import load_datasets
-import numpy as np
+from legacy.piece_classifier.dataset_utils import load_datasets
 from collections import Counter
 
 # Load the datasets

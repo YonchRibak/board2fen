@@ -3,12 +3,12 @@ import os
 os.environ['TF_ENABLE_ONEDNN_OPTS'] = '0'  # Disable aggressive native CPU optimizations
 
 from tensorflow.keras import layers, models
-from piece_classifier.config import IMG_SIZE, NUM_CLASSES, OUTPUT_DIR, LEARNING_RATE
-from piece_classifier.dataset_utils import load_datasets
+from legacy.piece_classifier.config import IMG_SIZE, NUM_CLASSES, OUTPUT_DIR, LEARNING_RATE
+from legacy.piece_classifier.dataset_utils import load_datasets
 
 
 import tensorflow as tf
-from utils.plotting import plot_training_history, plot_confusion_matrix, print_training_summary, evaluate_model
+from utils.plotting import plot_training_history, print_training_summary, evaluate_model
 
 tf.config.threading.set_intra_op_parallelism_threads(1)
 tf.config.threading.set_inter_op_parallelism_threads(1)

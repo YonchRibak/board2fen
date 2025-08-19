@@ -14,8 +14,8 @@ import seaborn as sns
 tf.config.threading.set_intra_op_parallelism_threads(1)
 tf.config.threading.set_inter_op_parallelism_threads(1)
 
-from piece_classifier.config import IMG_SIZE, NUM_CLASSES, OUTPUT_DIR
-from piece_classifier.dataset_utils import load_datasets
+from legacy.piece_classifier.config import IMG_SIZE, NUM_CLASSES, OUTPUT_DIR
+from legacy.piece_classifier.dataset_utils import load_datasets
 
 
 def build_improved_model():

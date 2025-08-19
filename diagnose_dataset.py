@@ -1,12 +1,10 @@
 # diagnose_dataset.py - Find out what's wrong with dataset loading
 
-import os
 from pathlib import Path
-from collections import Counter
 import tensorflow as tf
 
 # Your config imports
-from piece_classifier.config import OUTPUT_DIR, DATASET_DIR
+from legacy.piece_classifier.config import DATASET_DIR
 
 
 def count_actual_files(data_dir):

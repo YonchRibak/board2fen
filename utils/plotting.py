@@ -3,7 +3,7 @@ import numpy as np
 from sklearn.metrics import confusion_matrix, classification_report
 import seaborn as sns
 
-from piece_classifier.config import OUTPUT_DIR
+from legacy.piece_classifier.config import OUTPUT_DIR
 
 
 def plot_training_history(history, save_path=None):

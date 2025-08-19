@@ -32,8 +32,8 @@ class CornerDetectionConfig:
 
     # Training parameters
     batch_size: int = 16  # Reduced from 32 to save memory
-    epochs: int = 50
-    learning_rate: float = 1e-3
+    epochs: int = 80
+    learning_rate: float = 5e-4
     validation_split: float = 0.2
 
     # Data augmentation
@@ -206,16 +206,20 @@ class ChessCornerDataset:
         return dataset
 
     def _augment_data(self, image, corners):
-        """Apply data augmentation"""
+        """Apply targeted augmentation for failure modes"""
 
-        # Random brightness
-        image = tf.image.random_brightness(image, max_delta=0.1)
+        # Address darkness issues (your Sample 68 had brightness=46)
+        image = tf.image.random_brightness(image, max_delta=0.2)  # Increased from 0.1
 
-        # Random contrast
-        image = tf.image.random_contrast(image, lower=0.9, upper=1.1)
+        # Address contrast issues
+        image = tf.image.random_contrast(image, lower=0.8, upper=1.2)  # Increased range
 
-        # Random saturation
-        image = tf.image.random_saturation(image, lower=0.9, upper=1.1)
+        # Address saturation for different board materials
+        image = tf.image.random_saturation(image, lower=0.8, upper=1.2)  # Increased range
+
+        # Add noise for camera robustness
+        noise = tf.random.normal(tf.shape(image), mean=0.0, stddev=0.02)
+        image = tf.clip_by_value(image + noise, 0.0, 1.0)
 
         # Ensure image values stay in [0, 1] range
         image = tf.clip_by_value(image, 0.0, 1.0)
@@ -253,19 +257,19 @@ class CNNCornerDetector:
             # Global feature extraction
             layers.GlobalAveragePooling2D(),
             layers.BatchNormalization(),
-            layers.Dropout(0.3),
+            layers.Dropout(0.5),
 
             # Corner regression head
             layers.Dense(512, activation='relu'),
             layers.BatchNormalization(),
-            layers.Dropout(0.4),
+            layers.Dropout(0.6),
 
             layers.Dense(256, activation='relu'),
             layers.BatchNormalization(),
-            layers.Dropout(0.3),
+            layers.Dropout(0.5),
 
             layers.Dense(128, activation='relu'),
-            layers.Dropout(0.2),
+            layers.Dropout(0.4),
 
             # Output: 8 coordinates (4 corners × 2 coords)
             layers.Dense(self.config.output_size, activation='sigmoid')  # Sigmoid for normalized coords
@@ -274,7 +278,7 @@ class CNNCornerDetector:
         # Compile model
         model.compile(
             optimizer=optimizers.Adam(learning_rate=self.config.learning_rate),
-            loss='mse',  # Mean squared error for regression
+            loss='huber',  # More robust to outliers than MSE
             metrics=['mae']  # Mean absolute error
         )
 
@@ -310,9 +314,9 @@ class CNNCornerDetector:
             ),
             callbacks.ReduceLROnPlateau(
                 monitor='val_loss',
-                factor=0.3,
-                patience=5,
-                min_lr=1e-7,
+                factor=0.5,  # Less aggressive reduction
+                patience=3,  # Reduce sooner
+                min_lr=1e-6,  # Higher minimum
                 verbose=1
             )
         ]
