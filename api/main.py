@@ -2,15 +2,7 @@
 
 import os
 import time
-import hashlib
 import logging
-from io import BytesIO
-from typing import List, Optional, Any
-from pathlib import Path
-
-import numpy as np
-import cv2
-from PIL import Image
 from fastapi import FastAPI, File, UploadFile, HTTPException, Depends, BackgroundTasks, Request
 from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
@@ -26,17 +18,14 @@ from database import get_db, check_database_connection, health_check as db_healt
 
 # Import our chess pipeline components
 from _helpers import (
-    ImageProcessor,
     FENValidator,
     ChessPipelineService,
-    PredictionResult,
     validate_uploaded_image,
     resize_image_for_model
 )
 # Import database models
 from models import (
     ChessPrediction,
-    ModelVersion,
     get_database_statistics,
     check_retraining_threshold,
     get_corrected_predictions

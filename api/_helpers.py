@@ -1,11 +1,9 @@
 # api/_helpers.py - Helper functions and services for Chess Board to FEN API
 
-import os
 import sys
 import hashlib
 import logging
 import time
-import json
 from io import BytesIO
 from typing import Optional, List, Dict, Any, Tuple
 from pathlib import Path
