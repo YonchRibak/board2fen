@@ -1,0 +1,38 @@
+
+services:
+  db:
+    image: postgres:15
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-chessdb}
+      POSTGRES_USER: ${POSTGRES_USER:-chessuser}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-chesspass}
+    ports:
+      - "5434:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-chessuser} -d ${POSTGRES_DB:-chessdb}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      ENVIRONMENT: development
+      # Your app reads DATABASE_URL; this points it at the db service:
+      DATABASE_URL: postgresql+psycopg2://${POSTGRES_USER:-chessuser}:${POSTGRES_PASSWORD:-chesspass}@db:5432/${POSTGRES_DB:-chessdb}
+      # Optional: MODEL_PATH, etc.
+      # MODEL_PATH: /app/outputs/piece_classifier/final_chess_piece_classifier.keras
+    ports:
+      - "8081:8000"
+    volumes:
+      - ./outputs:/app/outputs  # persist model outputs on host
+
+volumes:
+  pgdata:

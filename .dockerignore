@@ -1,0 +1,20 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.venv/
+env/
+venv/
+
+# Git / IDE
+.git/
+.gitignore
+.vscode/
+.idea/
+
+legacy/
+notebooks/
+outputs/
+utils/
+end2end_board_classifier_new_data/

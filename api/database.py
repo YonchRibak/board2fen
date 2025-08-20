@@ -6,7 +6,7 @@ from sqlalchemy.orm import sessionmaker, Session
 from sqlalchemy.pool import StaticPool
 from contextlib import contextmanager
 from typing import Generator
-
+from sqlalchemy import text
 from config import settings
 from models import Base
 
@@ -135,7 +135,7 @@ def check_database_connection() -> bool:
     """Check if database connection is working"""
     try:
         with engine.connect() as connection:
-            connection.execute("SELECT 1")
+            connection.execute(text("SELECT 1"))
         logger.info("✅ Database connection successful")
         return True
     except Exception as e:
@@ -198,7 +198,7 @@ def health_check() -> dict:
                 logger.warning(f"Could not inspect tables: {e}")
 
             # Test basic query
-            result = connection.execute("SELECT 1")
+            result = connection.execute(text("SELECT 1"))
             if result.fetchone():
                 health_info["can_query"] = True
 
