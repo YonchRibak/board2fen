@@ -115,6 +115,46 @@ class RetrainingStatusResponse(BaseModel):
     corrections_until_retrain: int
     last_model_version: Optional[str]
 
+class ModelMetrics(BaseModel):
+    """Model metrics for a specific model version"""
+    # Model version info
+    version_id: int
+    version_number: str
+    created_at: str
+    is_active: bool
+
+    # Training metrics
+    training_data_count: int
+    validation_accuracy: Optional[float]
+    performance_metrics: Optional[Dict[str, Any]]
+
+    # Production usage metrics
+    total_predictions: int
+    successful_predictions: int
+    failed_predictions: int
+    success_rate: float
+
+    # Correction and accuracy metrics
+    corrections_received: int
+    correction_rate: float
+    average_confidence: Optional[float]
+
+    # Performance metrics
+    average_processing_time_ms: Optional[float]
+
+    # Time-based metrics
+    active_duration_days: Optional[int]
+    predictions_per_day: Optional[float]
+
+    # Additional info
+    notes: Optional[str]
+
+class ModelMetricsResponse(BaseModel):
+    """Response model for model metrics endpoint"""
+    total_model_versions: int
+    current_active_version: Optional[str]
+    metrics: List[ModelMetrics]
+
 # ============================================================================
 # SYSTEM SCHEMAS
 # ============================================================================

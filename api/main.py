@@ -28,7 +28,9 @@ from models import (
     ChessPrediction,
     get_database_statistics,
     check_retraining_threshold,
-    get_corrected_predictions
+    get_corrected_predictions,
+    get_model_metrics,
+    get_current_active_model
 )
 # Import Pydantic schemas
 from schemas import (
@@ -42,7 +44,7 @@ from schemas import (
     FENValidationResponse,
     RootResponse,
     RecentCorrectionsResponse,
-    RetrainingStatusResponse
+    RetrainingStatusResponse, ModelMetricsResponse, ModelMetrics
 )
 
 # Configure logging
@@ -399,6 +401,72 @@ async def get_model_status(db: Session = Depends(get_db)):
     except Exception as e:
         logger.error(f"Error getting model status: {e}")
         raise HTTPException(status_code=500, detail="Failed to get model status")
+
+
+@app.get("/model/metrics", response_model=ModelMetricsResponse)
+async def get_model_metrics(db: Session = Depends(get_db)):
+    """Get comprehensive metrics for all model versions/generations"""
+
+    try:
+        from models import ModelVersion, ChessPrediction
+        from datetime import datetime
+
+        # Get all model versions
+        model_versions = db.query(ModelVersion).order_by(ModelVersion.created_at.asc()).all()
+
+        if not model_versions:
+            return ModelMetricsResponse(
+                total_model_versions=0,
+                current_active_version=None,
+                metrics=[]
+            )
+
+        # Get current active model
+        active_model = db.query(ModelVersion).filter(ModelVersion.is_active == True).first()
+        current_active_version = active_model.version_number if active_model else None
+
+        # Simple metrics calculation inline
+        metrics_list = []
+
+        for model in model_versions:
+            # Basic metrics for now
+            total_predictions = db.query(ChessPrediction).count()
+            successful_predictions = db.query(ChessPrediction).filter(
+                ChessPrediction.prediction_successful == True
+            ).count()
+
+            model_metrics = ModelMetrics(
+                version_id=model.id,
+                version_number=model.version_number,
+                created_at=model.created_at.isoformat() if model.created_at else "",
+                is_active=model.is_active,
+                training_data_count=model.training_data_count or 0,
+                validation_accuracy=model.validation_accuracy,
+                performance_metrics=model.get_performance_metrics(),
+                total_predictions=total_predictions,
+                successful_predictions=successful_predictions,
+                failed_predictions=total_predictions - successful_predictions,
+                success_rate=successful_predictions / total_predictions if total_predictions > 0 else 0.0,
+                corrections_received=0,  # Simplified for now
+                correction_rate=0.0,
+                average_confidence=None,
+                average_processing_time_ms=None,
+                active_duration_days=0,
+                predictions_per_day=None,
+                notes=model.notes
+            )
+
+            metrics_list.append(model_metrics)
+
+        return ModelMetricsResponse(
+            total_model_versions=len(metrics_list),
+            current_active_version=current_active_version,
+            metrics=metrics_list
+        )
+
+    except Exception as e:
+        logger.error(f"Error getting model metrics: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to retrieve model metrics: {str(e)}")
 
 
 @app.get("/config/info", response_model=ConfigInfoResponse)

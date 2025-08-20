@@ -340,3 +340,115 @@ def check_retraining_threshold(db_session, threshold: int = 1000) -> Dict[str, A
         "corrections_until_retrain": max(0, threshold - corrections_since_last_model),
         "last_model_version": last_model.version_number if last_model else None
     }
+
+
+def get_model_metrics(db_session) -> List[Dict[str, Any]]:
+    """
+    Calculate comprehensive metrics for each model version
+    """
+    from sqlalchemy import func
+    from datetime import datetime, timedelta
+
+    # Get all model versions
+    model_versions = db_session.query(ModelVersion).order_by(ModelVersion.created_at.asc()).all()
+
+    if not model_versions:
+        return []
+
+    metrics_list = []
+
+    for i, model in enumerate(model_versions):
+        # Determine the time period this model was active
+        start_date = model.created_at
+
+        # End date is either the next model's start date or now if it's the current model
+        if i + 1 < len(model_versions):
+            end_date = model_versions[i + 1].created_at
+        else:
+            end_date = datetime.utcnow()
+
+        # Get predictions made during this model's active period
+        predictions_query = db_session.query(ChessPrediction).filter(
+            ChessPrediction.created_at >= start_date,
+            ChessPrediction.created_at < end_date
+        )
+
+        total_predictions = predictions_query.count()
+
+        # Calculate success metrics
+        successful_predictions = predictions_query.filter(
+            ChessPrediction.prediction_successful == True
+        ).count()
+
+        failed_predictions = total_predictions - successful_predictions
+        success_rate = successful_predictions / total_predictions if total_predictions > 0 else 0.0
+
+        # Calculate correction metrics
+        corrections_received = predictions_query.filter(
+            ChessPrediction.corrected_fen.isnot(None)
+        ).count()
+
+        correction_rate = corrections_received / total_predictions if total_predictions > 0 else 0.0
+
+        # Calculate average confidence
+        confidence_scores = db_session.query(ChessPrediction.confidence_score).filter(
+            ChessPrediction.created_at >= start_date,
+            ChessPrediction.created_at < end_date,
+            ChessPrediction.confidence_score.isnot(None)
+        ).all()
+
+        average_confidence = None
+        if confidence_scores:
+            average_confidence = sum(score[0] for score in confidence_scores) / len(confidence_scores)
+
+        # Calculate average processing time
+        processing_times = db_session.query(ChessPrediction.processing_time_ms).filter(
+            ChessPrediction.created_at >= start_date,
+            ChessPrediction.created_at < end_date,
+            ChessPrediction.processing_time_ms.isnot(None)
+        ).all()
+
+        average_processing_time = None
+        if processing_times:
+            average_processing_time = sum(time[0] for time in processing_times) / len(processing_times)
+
+        # Calculate time-based metrics
+        active_duration = end_date - start_date
+        active_duration_days = active_duration.days
+
+        predictions_per_day = None
+        if active_duration_days > 0:
+            predictions_per_day = total_predictions / active_duration_days
+
+        # Compile metrics
+        model_metrics = {
+            "version_id": model.id,
+            "version_number": model.version_number,
+            "created_at": model.created_at.isoformat() if model.created_at else None,
+            "is_active": model.is_active,
+            "training_data_count": model.training_data_count,
+            "validation_accuracy": model.validation_accuracy,
+            "performance_metrics": model.get_performance_metrics(),
+            "total_predictions": total_predictions,
+            "successful_predictions": successful_predictions,
+            "failed_predictions": failed_predictions,
+            "success_rate": round(success_rate, 4),
+            "corrections_received": corrections_received,
+            "correction_rate": round(correction_rate, 4),
+            "average_confidence": round(average_confidence, 4) if average_confidence else None,
+            "average_processing_time_ms": round(average_processing_time, 2) if average_processing_time else None,
+            "active_duration_days": active_duration_days,
+            "predictions_per_day": round(predictions_per_day, 2) if predictions_per_day else None,
+            "notes": model.notes
+        }
+
+        metrics_list.append(model_metrics)
+
+    return metrics_list
+
+
+def get_current_active_model(db_session) -> Optional[ModelVersion]:
+    """Get the currently active model version"""
+    return db_session.query(ModelVersion).filter(
+        ModelVersion.is_active == True
+    ).first()
