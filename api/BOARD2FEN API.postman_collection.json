@@ -1,0 +1,233 @@
+{
+	"info": {
+		"_postman_id": "2ffafb3f-cc11-42fd-9864-33665417ca89",
+		"name": "BOARD2FEN API",
+		"schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
+		"_exporter_id": "32756186"
+	},
+	"item": [
+		{
+			"name": "Docs",
+			"request": {
+				"method": "GET",
+				"header": [],
+				"url": {
+					"raw": "{{baseURL}}/docs",
+					"host": [
+						"{{baseURL}}"
+					],
+					"path": [
+						"docs"
+					]
+				}
+			},
+			"response": []
+		},
+		{
+			"name": "Health",
+			"request": {
+				"method": "GET",
+				"header": [],
+				"url": {
+					"raw": "{{baseURL}}/health",
+					"host": [
+						"{{baseURL}}"
+					],
+					"path": [
+						"health"
+					]
+				}
+			},
+			"response": []
+		},
+		{
+			"name": "Predict",
+			"request": {
+				"method": "POST",
+				"header": [],
+				"body": {
+					"mode": "formdata",
+					"formdata": [
+						{
+							"key": "file",
+							"type": "file",
+							"src": "/C:/Users/User/Pictures/test_image.jpg"
+						}
+					]
+				},
+				"url": {
+					"raw": "{{baseURL}}/predict",
+					"host": [
+						"{{baseURL}}"
+					],
+					"path": [
+						"predict"
+					]
+				}
+			},
+			"response": []
+		},
+		{
+			"name": "Correction",
+			"request": {
+				"method": "POST",
+				"header": [],
+				"url": {
+					"raw": "{{baseURL}}/predict/correct",
+					"host": [
+						"{{baseURL}}"
+					],
+					"path": [
+						"predict",
+						"correct"
+					]
+				}
+			},
+			"response": []
+		},
+		{
+			"name": "Specific Prediction",
+			"request": {
+				"method": "GET",
+				"header": [],
+				"url": {
+					"raw": "{{baseURL}}/predict/?prediction_id",
+					"host": [
+						"{{baseURL}}"
+					],
+					"path": [
+						"predict",
+						""
+					],
+					"query": [
+						{
+							"key": "prediction_id",
+							"value": null
+						}
+					]
+				}
+			},
+			"response": []
+		},
+		{
+			"name": "Stats",
+			"request": {
+				"method": "GET",
+				"header": [],
+				"url": {
+					"raw": "{{baseURL}}/stats",
+					"host": [
+						"{{baseURL}}"
+					],
+					"path": [
+						"stats"
+					]
+				}
+			},
+			"response": []
+		},
+		{
+			"name": "Recent Correction",
+			"request": {
+				"method": "GET",
+				"header": []
+			},
+			"response": []
+		},
+		{
+			"name": "Corrections Count",
+			"request": {
+				"method": "GET",
+				"header": []
+			},
+			"response": []
+		},
+		{
+			"name": "Model Status",
+			"request": {
+				"method": "GET",
+				"header": [],
+				"url": {
+					"raw": "{{baseURL}}/model/status",
+					"host": [
+						"{{baseURL}}"
+					],
+					"path": [
+						"model",
+						"status"
+					]
+				}
+			},
+			"response": []
+		},
+		{
+			"name": "Model Metrics",
+			"request": {
+				"method": "GET",
+				"header": [],
+				"url": {
+					"raw": "{{baseURL}}/model/status",
+					"host": [
+						"{{baseURL}}"
+					],
+					"path": [
+						"model",
+						"status"
+					]
+				}
+			},
+			"response": []
+		},
+		{
+			"name": "Config Info",
+			"request": {
+				"method": "GET",
+				"header": [],
+				"url": {
+					"raw": "{{baseURL}}/configl/info",
+					"host": [
+						"{{baseURL}}"
+					],
+					"path": [
+						"configl",
+						"info"
+					]
+				}
+			},
+			"response": []
+		},
+		{
+			"name": "Database Info",
+			"request": {
+				"method": "GET",
+				"header": [],
+				"url": {
+					"raw": "{{baseURL}}/configl/info",
+					"host": [
+						"{{baseURL}}"
+					],
+					"path": [
+						"configl",
+						"info"
+					]
+				}
+			},
+			"response": []
+		},
+		{
+			"name": "Validate FEN",
+			"request": {
+				"method": "GET",
+				"header": []
+			},
+			"response": []
+		}
+	],
+	"variable": [
+		{
+			"key": "baseURL",
+			"value": "http://localhost:8081",
+			"type": "default"
+		}
+	]
+}
