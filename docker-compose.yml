@@ -1,4 +1,3 @@
-
 services:
   db:
     image: postgres:15
@@ -25,14 +24,14 @@ services:
         condition: service_healthy
     environment:
       ENVIRONMENT: development
-      # Your app reads DATABASE_URL; this points it at the db service:
       DATABASE_URL: postgresql+psycopg2://${POSTGRES_USER:-chessuser}:${POSTGRES_PASSWORD:-chesspass}@db:5432/${POSTGRES_DB:-chessdb}
-      # Optional: MODEL_PATH, etc.
-      # MODEL_PATH: /app/outputs/piece_classifier/final_chess_piece_classifier.keras
+      # Fixed MODEL_PATH - added /app prefix
+      MODEL_PATH: /app/api/cnn_models/final_model.keras
     ports:
       - "8081:8000"
     volumes:
-      - ./outputs:/app/outputs  # persist model outputs on host
+      - ./outputs:/app/outputs
+      - ./api/cnn_models:/app/api/cnn_models:ro   # Fixed: added ./api/ prefix
 
 volumes:
   pgdata:

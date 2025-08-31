@@ -17,7 +17,7 @@ from typing import List
 # # ADD this after the imports:
 # @tf.keras.saving.register_keras_serializable()
 # def robust_corner_loss(y_true, y_pred):
-#     """Robust loss function for loading saved models"""
+#     """Robust loss function for loading saved cnn_models"""
 #     huber_loss = tf.keras.losses.Huber(delta=0.1)
 #     base_loss = huber_loss(y_true, y_pred)
 #
@@ -56,14 +56,14 @@ class RobustModelValidator:
         self.old_model = None
         self.new_model = None
 
-        # Load models
+        # Load cnn_models
         self._load_models()
 
     def _load_models(self):
-        """Load both old and new models for comparison"""
+        """Load both old and new cnn_models for comparison"""
 
         try:
-            print("📥 Loading models for comparison...")
+            print("📥 Loading cnn_models for comparison...")
             self.old_model = tf.keras.models.load_model(self.old_model_path)
             print(f"✅ Old model loaded: {self.old_model_path}")
         except Exception as e:
@@ -88,7 +88,7 @@ class RobustModelValidator:
         print("=" * 50)
         print(f"Testing {num_test_samples} samples...")
 
-        # Test both models on same samples
+        # Test both cnn_models on same samples
         old_results = self._test_model(self.old_model, num_test_samples, "Old Model")
         new_results = self._test_model(self.new_model, num_test_samples, "New Robust Model")
 
@@ -372,7 +372,7 @@ class RobustModelValidator:
         plt.show()
 
     def test_real_world_images(self, real_image_paths: List[str]):
-        """Test both models on real-world images to verify real-world improvement"""
+        """Test both cnn_models on real-world images to verify real-world improvement"""
 
         print(f"\n🌍 REAL-WORLD IMAGE TESTING")
         print("=" * 35)
@@ -388,7 +388,7 @@ class RobustModelValidator:
                 image = cv2.imread(image_path)
                 image_rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
 
-                # Test both models
+                # Test both cnn_models
                 old_corners = self._predict_corners(self.old_model, image_rgb)
                 new_corners = self._predict_corners(self.new_model, image_rgb)
 

@@ -12,7 +12,7 @@ venv/
 .gitignore
 .vscode/
 .idea/
-
+api/cnn_models/
 legacy/
 notebooks/
 outputs/

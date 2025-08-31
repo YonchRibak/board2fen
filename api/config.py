@@ -1,4 +1,4 @@
-# api/config.py - Configuration settings
+# api/streamlit_config.py - Configuration settings
 
 import os
 from pathlib import Path
@@ -10,6 +10,7 @@ DEFAULT_CORS_ORIGINS = ("*",)
 DEFAULT_CORS_METHODS = ("*",)
 DEFAULT_CORS_HEADERS = ("*",)
 DEFAULT_PIECE_CLASSES = (
+    "empty",
     "black_bishop", "black_king", "black_knight", "black_pawn",
     "black_queen", "black_rook", "white_bishop", "white_king",
     "white_knight", "white_pawn", "white_queen", "white_rook",
@@ -54,9 +55,9 @@ class Settings(BaseSettings):
     db_max_overflow: int = Field(default=10)
 
     # Model
-    model_path: str = Field(default="outputs/piece_classifier/final_chess_piece_classifier.keras")
-    model_input_width: int = Field(default=224)
-    model_input_height: int = Field(default=224)
+    model_path: str = Field(default="api/final_model.keras")
+    model_input_width: int = Field(default=512)
+    model_input_height: int = Field(default=512)
 
     piece_classes: tuple[str, ...] = Field(default=DEFAULT_PIECE_CLASSES)
 

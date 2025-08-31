@@ -1,4 +1,4 @@
-# api/models.py - Database Models for Chess Board to FEN API
+# api/cnn_models.py - Database Models for Chess Board to FEN API
 
 from sqlalchemy import Column, Integer, String, Text, LargeBinary, DateTime, Float, Boolean
 from sqlalchemy.ext.declarative import declarative_base

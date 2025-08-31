@@ -1,14 +1,23 @@
 # api/database.py - Database Connection Management
 
 import logging
+import sys
+from pathlib import Path
 from sqlalchemy import create_engine, event
 from sqlalchemy.orm import sessionmaker, Session
 from sqlalchemy.pool import StaticPool
 from contextlib import contextmanager
 from typing import Generator
 from sqlalchemy import text
-from config import settings
-from models import Base
+
+# Add the parent directory (project root) to Python path
+current_dir = Path(__file__).resolve().parent
+project_root = current_dir.parent if current_dir.name == "api" else current_dir
+sys.path.insert(0, str(project_root))
+
+# Now use absolute imports
+from api.config import settings
+from api.models import Base
 
 logger = logging.getLogger(__name__)
 

@@ -228,7 +228,7 @@ def get_augmentation():
 
 # Model architecture for piece classification
 def build_individual_piece_classifier():
-    from tensorflow.keras import layers, models, applications
+    from tensorflow.keras import layers, cnn_models, applications
 
     base_model = applications.EfficientNetB3(
         input_shape=IMG_SIZE + (3,),
@@ -237,7 +237,7 @@ def build_individual_piece_classifier():
     )
     base_model.trainable = False
 
-    model = models.Sequential([
+    model = cnn_models.Sequential([
         base_model,
         layers.GlobalAveragePooling2D(),
         layers.BatchNormalization(),

@@ -3,6 +3,8 @@
 import os
 import time
 import logging
+import sys
+from pathlib import Path
 from fastapi import FastAPI, File, UploadFile, HTTPException, Depends, BackgroundTasks, Request
 from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
@@ -10,21 +12,26 @@ from sqlalchemy.orm import Session
 from datetime import datetime
 import uvicorn
 
+# Add the parent directory (project root) to Python path
+current_dir = Path(__file__).resolve().parent
+project_root = current_dir.parent if current_dir.name == "api" else current_dir
+sys.path.insert(0, str(project_root))
+
 # Import configuration
-from config import settings
+from api.config import settings
 
 # Import database components
-from database import get_db, check_database_connection, health_check as db_health_check, get_database_info
+from api.database import get_db, check_database_connection, health_check as db_health_check, get_database_info
 
 # Import our chess pipeline components
-from _helpers import (
+from api._helpers import (
     FENValidator,
     ChessPipelineService,
     validate_uploaded_image,
     resize_image_for_model
 )
-# Import database models
-from models import (
+# Import database cnn_models
+from api.models import (
     ChessPrediction,
     get_database_statistics,
     check_retraining_threshold,
@@ -33,7 +40,7 @@ from models import (
     get_current_active_model
 )
 # Import Pydantic schemas
-from schemas import (
+from api.schemas import (
     PredictionResponse,
     CorrectionRequest,
     CorrectionResponse,
@@ -468,6 +475,98 @@ async def get_model_metrics(db: Session = Depends(get_db)):
         logger.error(f"Error getting model metrics: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to retrieve model metrics: {str(e)}")
 
+
+# Replace the debug endpoint in main.py with this corrected version
+
+@app.get("/debug/model")
+async def debug_model_loading():
+    """Debug endpoint to check model loading status"""
+
+    # Import everything we need in this function
+    from pathlib import Path
+    import os
+
+    debug_info = {
+        "pipeline_exists": chess_pipeline is not None,
+        "model_loaded": chess_pipeline.model_loaded if chess_pipeline else False,
+        "model_path": str(settings.absolute_model_path),
+        "model_exists": settings.absolute_model_path.exists(),
+        "model_size_mb": None,
+        "errors": [],
+        "tensorflow_version": None,
+        "current_directory": str(Path.cwd()),
+        "files_in_model_dir": [],
+        "settings_model_path": settings.model_path,
+        "python_path": os.environ.get("PYTHONPATH", "Not set")
+    }
+
+    # Check TensorFlow
+    try:
+        import tensorflow as tf
+        debug_info["tensorflow_version"] = tf.__version__
+    except Exception as e:
+        debug_info["errors"].append(f"TensorFlow import error: {e}")
+
+    # Check model file
+    model_path = settings.absolute_model_path
+    debug_info["model_path_absolute"] = str(model_path.absolute())
+
+    if model_path.exists():
+        debug_info["model_size_mb"] = round(model_path.stat().st_size / (1024 * 1024), 2)
+    else:
+        debug_info["errors"].append(f"Model file not found: {model_path}")
+
+        # List files in the directory
+        parent_dir = model_path.parent
+        if parent_dir.exists():
+            debug_info["files_in_model_dir"] = [f.name for f in parent_dir.glob("*")]
+            debug_info["parent_dir_exists"] = True
+        else:
+            debug_info["errors"].append(f"Model directory doesn't exist: {parent_dir}")
+            debug_info["parent_dir_exists"] = False
+
+            # Try to find any .keras files
+            debug_info["keras_files_found"] = []
+            try:
+                for keras_file in Path("/app").rglob("*.keras"):
+                    debug_info["keras_files_found"].append(str(keras_file))
+            except:
+                pass
+
+    # Try to manually load the model
+    try:
+        if model_path.exists():
+            import tensorflow as tf
+            test_model = tf.keras.models.load_model(str(model_path))
+            debug_info["manual_load_success"] = True
+            debug_info["model_input_shape"] = str(test_model.input_shape)
+            debug_info["model_output_shape"] = str(test_model.output_shape)
+        else:
+            debug_info["manual_load_success"] = False
+            debug_info["errors"].append("Cannot test manual load - file doesn't exist")
+    except Exception as e:
+        debug_info["manual_load_success"] = False
+        debug_info["errors"].append(f"Manual model loading failed: {e}")
+
+    # Test pipeline initialization
+    try:
+        from _helpers import ChessPipelineService
+        test_pipeline = ChessPipelineService(str(model_path))
+        debug_info["test_pipeline_success"] = test_pipeline.model_loaded
+        if not test_pipeline.model_loaded:
+            debug_info["errors"].append("Test pipeline failed to load model")
+    except Exception as e:
+        debug_info["test_pipeline_success"] = False
+        debug_info["errors"].append(f"Test pipeline error: {e}")
+        import traceback
+        debug_info["test_pipeline_traceback"] = traceback.format_exc()
+
+    # Check if the global chess_pipeline has any detailed error info
+    if chess_pipeline and hasattr(chess_pipeline, 'model_path'):
+        debug_info["global_pipeline_model_path"] = str(chess_pipeline.model_path)
+        debug_info["global_pipeline_model_exists"] = chess_pipeline.model_path.exists()
+
+    return debug_info
 
 @app.get("/config/info", response_model=ConfigInfoResponse)
 async def get_config_info():
