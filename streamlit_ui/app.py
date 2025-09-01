@@ -12,11 +12,15 @@ sys.path.append(str(project_root))
 
 from api_service import predict_fen, submit_correction  # noqa: E402
 from state_manager import initialize_session_state        # noqa: E402
-from my_component.component_template.template_reactless.my_component import st_chessboard_fen
+from my_component import st_chessboard_fen
 
 # -----------------------------
 # HTML template for chess board
 # -----------------------------
+# You can remove this entire HTML template since you're using a custom component.
+# The component's frontend code should handle the HTML and CSS.
+# You're currently using a component that renders its own HTML, so this
+# is no longer needed.
 _CHESSBOARD_HTML = """
 <!DOCTYPE html>
 <html lang="en">
@@ -159,9 +163,6 @@ _CHESSBOARD_HTML = """
 </html>
 """
 
-
-
-
 # -----------------------------
 # Helpers
 # -----------------------------
@@ -217,7 +218,8 @@ def main():
     fen_from_board = st_chessboard_fen(
         initial_board_fen=fen_board,
         key="board_editor",
-        frame_height=720,  # optional
+        # Remove this line:
+        # frame_height=720,  # optional
     )
 
     if isinstance(fen_from_board, str) and fen_from_board and fen_from_board != fen_board:
