@@ -30,7 +30,6 @@ from _helpers import (
     check_gcs_upload_requirements,
     prompt_upload_models,
     BoardLevelEvalCallback,
-    download_file_with_retry,
     _read_jsonl,
     load_class_order_from_gcs,
     find_empty_index,
@@ -50,6 +49,31 @@ logger = None
 # Set matplotlib to non-interactive backend for headless environments
 mplstyle.use('default')
 plt.ioff()  # Turn off interactive mode
+
+
+# Add missing function as a patch (to avoid needing to update _helpers.py)
+def download_file_with_retry(url: str, max_retries: int = 3, timeout: int = 30):
+    """Quiet version of download function to replace the one in _helpers.py"""
+    import requests
+    import time
+
+    for attempt in range(max_retries):
+        try:
+            response = requests.get(url, timeout=timeout, stream=True)
+            response.raise_for_status()
+            return response
+        except requests.exceptions.Timeout:
+            if attempt == max_retries - 1:
+                raise
+            time.sleep(2 ** attempt)
+        except requests.exceptions.ConnectionError:
+            if attempt == max_retries - 1:
+                raise
+            time.sleep(2 ** attempt)
+        except requests.exceptions.HTTPError:
+            raise
+        except Exception:
+            raise
 
 
 class ProgressBar:
@@ -111,20 +135,40 @@ def extract_image_paths_from_jsonl(jsonl_files: List[Path]) -> Set[str]:
 
 
 def convert_path_to_gcs_url(file_path: str) -> str:
-    """Convert local file path to GCS URL."""
+    """Convert local file path to GCS URL with proper folder structure."""
     if file_path.startswith("http"):
         return file_path
 
-    # Convert local path to GCS URL
+    # Extract filename from path
+    filename = Path(file_path).name
+
+    # ChessReD images are named like G011_IMG155.jpg where G011 means game 11
+    # The images are stored in folders 0-99 corresponding to the game number
+    if filename.startswith('G') and '_' in filename:
+        try:
+            # Extract game number from filename (e.g., G011 -> 11)
+            game_part = filename.split('_')[0]  # Get "G011" part
+            game_number = int(game_part[1:])  # Remove 'G' and convert to int
+
+            # Construct proper GCS URL with folder structure
+            gcs_url = f"{GCS_IMAGES_BASE}/{game_number}/{filename}"
+            return gcs_url
+
+        except (ValueError, IndexError) as e:
+            if logger:
+                logger.warning(f"Could not extract game number from filename {filename}: {e}")
+
+    # Fallback: try original path parsing
     path_parts = file_path.replace("\\", "/").split("/")
     try:
         images_idx = path_parts.index("images")
         rel_path_parts = path_parts[images_idx + 1:]  # Skip "images", take folder/file
         gcs_url = f"{GCS_IMAGES_BASE}/{'/'.join(rel_path_parts)}"
     except (ValueError, IndexError):
-        # Fallback: take last 2 parts (folder/file)
-        rel_path_parts = path_parts[-2:] if len(path_parts) >= 2 else path_parts
-        gcs_url = f"{GCS_IMAGES_BASE}/{'/'.join(rel_path_parts)}"
+        # Last resort: assume it's a direct filename and try folder 0
+        gcs_url = f"{GCS_IMAGES_BASE}/0/{filename}"
+        if logger:
+            logger.warning(f"Using fallback URL for {filename}: {gcs_url}")
 
     return gcs_url
 
@@ -217,7 +261,8 @@ def pre_download_images(image_paths: Set[str], cache_dir: Path, max_workers: int
             else:
                 failed_downloads += 1
                 failed_urls.append(gcs_url)
-                if error_msg and "404" not in error_msg:  # Don't log 404s as they're common
+                # Only print failures (not 404s which are common and expected)
+                if error_msg and "404" not in error_msg and "Not Found" not in error_msg:
                     print(f"\n[FAILED] {gcs_url}: {error_msg}")
 
             progress.update(1)

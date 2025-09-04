@@ -236,6 +236,31 @@ def download_file_with_retry(url: str, max_retries: int = 3, timeout: int = 30) 
             raise
 
 
+def download_file_quietly(url: str, max_retries: int = 3, timeout: int = 30) -> requests.Response:
+    """Download file from URL quietly without logging progress."""
+    for attempt in range(max_retries):
+        try:
+            response = requests.get(url, timeout=timeout, stream=True)
+            response.raise_for_status()
+            return response
+
+        except requests.exceptions.Timeout as e:
+            if attempt == max_retries - 1:
+                raise
+            time.sleep(2 ** attempt)  # Exponential backoff
+
+        except requests.exceptions.ConnectionError as e:
+            if attempt == max_retries - 1:
+                raise
+            time.sleep(2 ** attempt)
+
+        except requests.exceptions.HTTPError as e:
+            raise  # Don't retry HTTP errors
+
+        except Exception as e:
+            raise
+
+
 def check_preprocessed_data_exists() -> bool:
     """Check if preprocessed data exists on GCS."""
     required_files = [
@@ -627,7 +652,7 @@ def load_image_from_gcs_url(url: str, target_size: Tuple[int, int]) -> np.ndarra
     """Load image from GCS URL with error handling and retries."""
     for attempt in range(3):
         try:
-            response = download_file_with_retry(url, max_retries=2, timeout=15)
+            response = download_file_quietly(url, max_retries=2, timeout=15)
             image_bytes = response.content
 
             # Decode image
