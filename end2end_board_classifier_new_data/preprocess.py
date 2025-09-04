@@ -28,101 +28,150 @@ import requests
 import time
 import sys
 from pathlib import Path
-from typing import Dict, Any, List, Tuple
+from typing import Dict, Any, List, Tuple, Optional
 
 # GCS Configuration
 GCS_BUCKET_BASE = "https://storage.googleapis.com/chess_red_dataset"
 GCS_ANNOTATIONS_URL = f"{GCS_BUCKET_BASE}/annotations.json"
 GCS_PREPROCESSED_BASE = f"{GCS_BUCKET_BASE}/chessred_preprocessed"
-GCS_IMAGES_BASE = f"{GCS_BUCKET_BASE}/chessred"
+GCS_IMAGES_BASE = f"{GCS_BUCKET_BASE}/chessred/images"
 
-# Local output directory
-LOCAL_CACHE_DIR = Path(__file__).resolve().parent / "gcs_cache"
+# Local directories
+LOCAL_CACHE_DIR = Path("./gcs_cache")
+LOCAL_ANNOTATIONS_PATH = LOCAL_CACHE_DIR / "annotations.json"
+LOCAL_CLASS_ORDER_PATH = LOCAL_CACHE_DIR / "class_order.json"
+LOCAL_PREPROCESSED_BASE = LOCAL_CACHE_DIR
+LOCAL_IMAGE_CACHE = LOCAL_CACHE_DIR / "images"
 
-# Chess board mapping
-FILE_TO_COL = {c: i for i, c in enumerate("abcdefgh")}
+# Constants based on ChessReD categories
+CLASS_MAPPING = {
+    'w-pawn': 0, 'w-knight': 1, 'w-bishop': 2, 'w-rook': 3, 'w-queen': 4, 'w-king': 5,
+    'b-pawn': 6, 'b-knight': 7, 'b-bishop': 8, 'b-rook': 9, 'b-queen': 10, 'b-king': 11,
+    'empty': 12
+}
+CLASS_NAMES = [
+    'w-pawn', 'w-knight', 'w-bishop', 'w-rook', 'w-queen', 'w-king',
+    'b-pawn', 'b-knight', 'b-bishop', 'b-rook', 'b-queen', 'b-king',
+    'empty'
+]
+NUM_CLASSES = len(CLASS_NAMES)
+EMPTY_CLASS_ID = 12
 
-
-def setup_logging() -> logging.Logger:
-    """Setup logging for preprocessing."""
-    log_dir = Path(__file__).resolve().parent / "logs"
-    log_dir.mkdir(exist_ok=True)
-
-    logger = logging.getLogger('chess_preprocessing')
-    logger.setLevel(logging.INFO)
-
-    # Clear existing handlers
-    logger.handlers.clear()
-
-    # File handler
-    log_file = log_dir / 'preprocessing.log'
-    file_handler = logging.FileHandler(log_file)
-    file_handler.setLevel(logging.INFO)
-
-    # Console handler
-    console_handler = logging.StreamHandler()
-    console_handler.setLevel(logging.INFO)
-
-    # Formatter
-    formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
-    file_handler.setFormatter(formatter)
-    console_handler.setFormatter(formatter)
-
-    logger.addHandler(file_handler)
-    logger.addHandler(console_handler)
-
-    return logger
+# Setup logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger(__name__)
 
 
-def download_with_retry(url: str, max_retries: int = 3, timeout: int = 30) -> requests.Response:
-    """Download with retry logic and comprehensive error handling."""
-    logger = logging.getLogger('chess_preprocessing')
+def chess_position_to_index(position: str) -> Optional[int]:
+    """
+    Convert chess notation (e.g., 'a8', 'e4') to board array index (0-63).
 
+    Args:
+        position: Chess notation string like 'a8', 'e4'
+
+    Returns:
+        Array index 0-63, or None if invalid position
+
+    Board layout:
+        a8=0,  b8=1,  c8=2,  d8=3,  e8=4,  f8=5,  g8=6,  h8=7
+        a7=8,  b7=9,  c7=10, d7=11, e7=12, f7=13, g7=14, h7=15
+        ...
+        a1=56, b1=57, c1=58, d1=59, e1=60, f1=61, g1=62, h1=63
+    """
+    if not isinstance(position, str) or len(position) != 2:
+        return None
+
+    file_char = position[0].lower()  # a-h
+    rank_char = position[1]  # 1-8
+
+    if file_char not in 'abcdefgh' or rank_char not in '12345678':
+        return None
+
+    file_idx = ord(file_char) - ord('a')  # 0-7
+    rank_idx = int(rank_char) - 1  # 0-7
+
+    # Convert to array index: a8=0, b8=1, ..., h8=7, a7=8, ..., h1=63
+    return (7 - rank_idx) * 8 + file_idx
+
+
+def _download_file_with_retry(url: str, local_path: Path, max_retries: int = 3) -> bool:
+    """Download a file from a URL to a local path with retry logic."""
     for attempt in range(max_retries):
         try:
-            logger.info(f"Downloading {url} (attempt {attempt + 1}/{max_retries})")
-            print(f"[DOWNLOAD] Fetching {url} (attempt {attempt + 1}/{max_retries})")
-
-            response = requests.get(url, timeout=timeout)
+            logger.info(f"Downloading {url} to {local_path} (attempt {attempt + 1}/{max_retries})")
+            response = requests.get(url, stream=True, timeout=30)
             response.raise_for_status()
 
+            with open(local_path, 'wb') as f:
+                for chunk in response.iter_content(chunk_size=8192):
+                    if chunk:  # Filter out keep-alive chunks
+                        f.write(chunk)
+
             logger.info(f"Successfully downloaded {url}")
-            print(f"[SUCCESS] Downloaded {url}")
-            return response
+            return True
 
-        except requests.exceptions.Timeout as e:
-            error_msg = f"Timeout downloading {url}: {e}"
-            logger.warning(error_msg)
-            print(f"[WARNING] {error_msg}")
-            if attempt == max_retries - 1:
-                raise
-            time.sleep(2 ** attempt)
+        except requests.exceptions.RequestException as e:
+            logger.warning(f"Download attempt {attempt + 1} failed: {e}")
+            if attempt < max_retries - 1:
+                time.sleep(2 ** attempt)  # Exponential backoff
+            else:
+                logger.error(f"Failed to download {url} after {max_retries} attempts: {e}")
+                return False
+        except Exception as e:
+            logger.error(f"Unexpected error downloading {url}: {e}")
+            return False
 
-        except requests.exceptions.ConnectionError as e:
-            error_msg = f"Connection error downloading {url}: {e}"
-            logger.warning(error_msg)
-            print(f"[WARNING] {error_msg}")
-            if attempt == max_retries - 1:
-                raise
-            time.sleep(2 ** attempt)
+    return False
 
-        except requests.exceptions.HTTPError as e:
-            error_msg = f"HTTP error downloading {url}: {e.response.status_code}"
-            logger.error(error_msg)
-            print(f"[ERROR] {error_msg}")
-            raise
+
+def _create_label_from_pieces(pieces: List[Dict]) -> List[int]:
+    """
+    Convert piece annotations to a dense 64-element board array.
+
+    Args:
+        pieces: List of piece dictionaries from ChessReD annotations
+
+    Returns:
+        List of 64 class indices (0-12, where 12 = empty)
+    """
+    # Initialize all squares as empty
+    board = [EMPTY_CLASS_ID] * 64
+
+    for piece in pieces:
+        try:
+            position = piece.get('chessboard_position')
+            category_id = piece.get('category_id')
+
+            if position is None or category_id is None:
+                logger.warning(f"Piece missing required fields: {piece}")
+                continue
+
+            # Convert chess position to array index
+            idx = chess_position_to_index(position)
+            if idx is None:
+                logger.warning(f"Invalid chess position '{position}' in piece: {piece}")
+                continue
+
+            # Validate category_id
+            if not (0 <= category_id <= 12):
+                logger.warning(f"Invalid category_id {category_id} in piece: {piece}")
+                continue
+
+            # Place piece on board
+            board[idx] = category_id
 
         except Exception as e:
-            error_msg = f"Unexpected error downloading {url}: {e}"
-            logger.error(error_msg)
-            print(f"[ERROR] {error_msg}")
-            raise
+            logger.warning(f"Error processing piece {piece}: {e}")
+            continue
+
+    return board
 
 
-def check_preprocessed_exists() -> bool:
+def check_preprocessed_data_exists() -> bool:
     """Check if preprocessed data exists on GCS."""
-    logger = logging.getLogger('chess_preprocessing')
-
     required_files = [
         "class_order.json",
         "index_train.jsonl",
@@ -130,317 +179,264 @@ def check_preprocessed_exists() -> bool:
         "index_test.jsonl"
     ]
 
-    print("[CHECK] Checking if preprocessed data exists on GCS...")
+    print("[GCS] Checking if preprocessed data exists...")
     logger.info("Checking if preprocessed data exists on GCS")
-
-    missing_files = []
 
     for file_name in required_files:
         url = f"{GCS_PREPROCESSED_BASE}/{file_name}"
         try:
             response = requests.head(url, timeout=10)
-            if response.status_code == 200:
-                print(f"[CHECK] Found: {file_name}")
-                logger.info(f"Found preprocessed file: {file_name}")
-            else:
-                print(f"[CHECK] Missing: {file_name} (status: {response.status_code})")
-                logger.info(f"Missing preprocessed file: {file_name}")
-                missing_files.append(file_name)
-
+            if response.status_code != 200:
+                print(f"[GCS] Missing file: {file_name}")
+                logger.info(f"Preprocessed file not found: {file_name}")
+                return False
         except Exception as e:
-            error_msg = f"Error checking {file_name}: {e}"
-            print(f"[WARNING] {error_msg}")
-            logger.warning(error_msg)
-            missing_files.append(file_name)
+            print(f"[GCS] Error checking {file_name}: {e}")
+            logger.warning(f"Error checking preprocessed file {file_name}: {e}")
+            return False
 
-    if not missing_files:
-        print("[SUCCESS] All preprocessed files found on GCS!")
-        logger.info("All preprocessed files found on GCS")
-        return True
-    else:
-        print(f"[INFO] Missing files: {missing_files}")
-        logger.info(f"Missing preprocessed files: {missing_files}")
-        return False
-
-
-def algebraic_to_index(square: str) -> int:
-    """Convert algebraic notation (e.g., 'a1') to board index (0-63)."""
-    file_c = square[0].lower()
-    rank_c = square[1]
-    col = FILE_TO_COL[file_c]
-    row = int(rank_c) - 1
-    return row * 8 + col
-
-
-def build_class_order(categories: List[Dict[str, Any]]) -> List[str]:
-    """Build class order from categories (sorted by id)."""
-    categories_sorted = sorted(categories, key=lambda c: c["id"])
-    return [c["name"].strip().lower() for c in categories_sorted]
-
-
-def build_category_maps(categories: List[Dict[str, Any]], class_order: List[str]) -> Tuple[Dict[int, int], int]:
-    """Map dataset category_id -> model class index; return mapping and empty category id."""
-    logger = logging.getLogger('chess_preprocessing')
-
-    name_to_idx = {n: i for i, n in enumerate(class_order)}
-    catid_to_idx: Dict[int, int] = {}
-    empty_id = None
-
-    for c in categories:
-        nm = c["name"].strip().lower()
-        if nm not in name_to_idx:
-            error_msg = f"Category '{nm}' not present in class_order"
-            logger.error(error_msg)
-            raise ValueError(error_msg)
-
-        catid_to_idx[c["id"]] = name_to_idx[nm]
-        if nm == "empty":
-            empty_id = c["id"]
-
-    if empty_id is None:
-        error_msg = "No 'empty' category found in annotations"
-        logger.error(error_msg)
-        raise ValueError(error_msg)
-
-    logger.info(f"Built category mapping with {len(catid_to_idx)} categories")
-    return catid_to_idx, empty_id
-
-
-def collect_pieces_by_image(anno: Dict[str, Any], class_order: List[str]) -> Dict[int, List[Tuple[int, int]]]:
-    """Collect piece positions for each image."""
-    logger = logging.getLogger('chess_preprocessing')
-
-    try:
-        catid_to_idx, _empty_id = build_category_maps(anno["categories"], class_order)
-        per_image: Dict[int, List[Tuple[int, int]]] = {}
-
-        total_pieces = len(anno["annotations"]["pieces"])
-        processed = 0
-
-        for p in anno["annotations"]["pieces"]:
-            img_id = int(p["image_id"])
-            sq = p["chessboard_position"]
-            ds_cat = int(p["category_id"])
-
-            sq_idx = algebraic_to_index(sq)
-            cls_idx = catid_to_idx[ds_cat]
-
-            # Skip empty pieces (they're implicit)
-            if class_order[cls_idx] == "empty":
-                continue
-
-            per_image.setdefault(img_id, []).append((sq_idx, cls_idx))
-            processed += 1
-
-            if processed % 10000 == 0:
-                print(f"[PROGRESS] Processed {processed}/{total_pieces} piece annotations")
-
-        logger.info(f"Collected pieces for {len(per_image)} images from {total_pieces} annotations")
-        return per_image
-
-    except Exception as e:
-        error_msg = f"Error collecting pieces: {e}"
-        logger.error(error_msg)
-        print(f"[ERROR] {error_msg}")
-        raise
-
-
-def images_index_by_id(anno: Dict[str, Any]) -> Dict[int, Dict[str, Any]]:
-    """Create image lookup by ID."""
-    return {int(im["id"]): im for im in anno["images"]}
-
-
-def write_jsonl(path: Path, rows: List[Dict[str, Any]]) -> bool:
-    """Write rows to JSONL file with error handling."""
-    logger = logging.getLogger('chess_preprocessing')
-
-    try:
-        path.parent.mkdir(parents=True, exist_ok=True)
-
-        with path.open("w", encoding="utf-8") as f:
-            for r in rows:
-                f.write(json.dumps(r, ensure_ascii=False) + "\n")
-
-        logger.info(f"Successfully wrote {len(rows)} rows to {path}")
-        return True
-
-    except Exception as e:
-        error_msg = f"Error writing JSONL to {path}: {e}"
-        logger.error(error_msg)
-        print(f"[ERROR] {error_msg}")
-        return False
-
-
-def resolve_split_ids(anno: Dict[str, Any], split_name: str) -> List[int]:
-    """Get image IDs for a data split."""
-    try:
-        return [int(x) for x in anno["splits"][split_name]["image_ids"]]
-    except Exception as e:
-        logger = logging.getLogger('chess_preprocessing')
-        error_msg = f"Error resolving {split_name} split: {e}"
-        logger.error(error_msg)
-        raise
-
-
-def build_gcs_rows(image_ids: List[int], img_by_id: Dict[int, Dict[str, Any]],
-                   per_image_sparse: Dict[int, List[Tuple[int, int]]]) -> List[Dict[str, Any]]:
-    """Build training rows with GCS URLs."""
-    logger = logging.getLogger('chess_preprocessing')
-
-    rows = []
-    missing_count = 0
-
-    for iid in image_ids:
-        if iid not in img_by_id:
-            missing_count += 1
-            continue
-
-        meta = img_by_id[iid]
-        # Convert path to GCS URL
-        rel_path = meta["path"].replace("\\", "/")  # Normalize path separators
-        gcs_url = f"{GCS_IMAGES_BASE}/{rel_path}"
-
-        # Get sparse piece labels (empty squares are implicit)
-        sparse = per_image_sparse.get(iid, [])
-
-        rows.append({
-            "image_id": iid,
-            "file_path": gcs_url,  # Now points to GCS
-            "labels_sparse": sparse,
-        })
-
-    if missing_count > 0:
-        logger.warning(f"Skipped {missing_count} images with missing metadata")
-        print(f"[WARNING] Skipped {missing_count} images with missing metadata")
-
-    logger.info(f"Built {len(rows)} rows for data split")
-    return rows
+    print("[GCS] All preprocessed files found!")
+    logger.info("All preprocessed files found on GCS")
+    return True
 
 
 def download_and_preprocess() -> bool:
-    """Download annotations from GCS and create preprocessed data."""
-    logger = logging.getLogger('chess_preprocessing')
-
+    """Main function to download annotations and preprocess them into JSONL format."""
     try:
-        print("[DOWNLOAD] Downloading annotations from GCS...")
-        logger.info("Starting download and preprocessing")
-
-        # Download annotations.json
-        response = download_with_retry(GCS_ANNOTATIONS_URL)
-        anno = response.json()
-
-        print(f"[SUCCESS] Loaded annotations with {len(anno['images'])} images")
-        logger.info(f"Loaded annotations with {len(anno['images'])} images")
-
-        # Build class order and piece mappings
-        print("[PROCESS] Building class order and mappings...")
-        class_order = build_class_order(anno["categories"])
-        per_image_sparse = collect_pieces_by_image(anno, class_order)
-
-        # Create output directory
+        # Create cache directory
         LOCAL_CACHE_DIR.mkdir(parents=True, exist_ok=True)
 
+        # 1. Download annotations.json
+        print("[DOWNLOAD] Downloading ChessReD annotations...")
+        if not _download_file_with_retry(GCS_ANNOTATIONS_URL, LOCAL_ANNOTATIONS_PATH):
+            print("[ERROR] Failed to download annotations.json")
+            return False
+
+        # 2. Load and parse annotations
+        print("[PARSE] Loading annotations...")
+        try:
+            with open(LOCAL_ANNOTATIONS_PATH, 'r', encoding='utf-8') as f:
+                chessred_data = json.load(f)
+
+            logger.info(f"Loaded ChessReD data with keys: {list(chessred_data.keys())}")
+
+        except Exception as e:
+            logger.error(f"Failed to parse annotations.json: {e}")
+            return False
+
+        # 3. Extract data components
+        try:
+            images_data = chessred_data['images']
+            annotations_data = chessred_data['annotations']
+            categories_data = chessred_data['categories']
+
+            # Extract pieces from annotations
+            pieces_data = annotations_data['pieces']
+
+            print(f"[INFO] Found {len(images_data)} images")
+            print(f"[INFO] Found {len(pieces_data)} piece annotations")
+            print(f"[INFO] Found {len(categories_data)} categories")
+
+            logger.info(
+                f"Data summary: {len(images_data)} images, {len(pieces_data)} pieces, {len(categories_data)} categories")
+
+        except KeyError as e:
+            logger.error(f"Missing expected key in ChessReD data: {e}")
+            return False
+
+        # 4. Create class order mapping from categories
+        print("[CATEGORIES] Processing categories...")
+
+        # Verify we have the expected 13 categories (0-11 pieces + 12 empty)
+        if len(categories_data) != 13:
+            logger.warning(f"Expected 13 categories, found {len(categories_data)}")
+
         # Save class order
-        class_order_path = LOCAL_CACHE_DIR / "class_order.json"
-        with open(class_order_path, 'w', encoding='utf-8') as f:
-            json.dump(class_order, f, indent=2)
+        with open(LOCAL_CLASS_ORDER_PATH, 'w', encoding='utf-8') as f:
+            json.dump(CLASS_NAMES, f, indent=2)
 
-        print(f"[SUCCESS] Saved class order with {len(class_order)} classes")
-        logger.info(f"Saved class order with {len(class_order)} classes: {class_order}")
+        logger.info("Saved class_order.json")
 
-        # Build image index
-        img_by_id = images_index_by_id(anno)
+        # 5. Create image_id to image mapping
+        print("[MAPPING] Creating image mappings...")
+        image_id_to_info = {img['id']: img for img in images_data}
 
-        # Process splits
-        print("[PROCESS] Processing data splits...")
+        # Group pieces by image_id
+        pieces_by_image = {}
+        for piece in pieces_data:
+            image_id = piece['image_id']
+            if image_id not in pieces_by_image:
+                pieces_by_image[image_id] = []
+            pieces_by_image[image_id].append(piece)
 
-        splits_data = {}
-        for split_name in ["train", "val", "test"]:
+        logger.info(f"Grouped pieces into {len(pieces_by_image)} unique images")
+
+        # 6. Create samples for each image
+        print("[SAMPLES] Creating training samples...")
+        samples = []
+
+        for image_id, image_info in image_id_to_info.items():
             try:
-                image_ids = resolve_split_ids(anno, split_name)
-                rows = build_gcs_rows(image_ids, img_by_id, per_image_sparse)
-                splits_data[split_name] = rows
+                # Get pieces for this image (empty list if no pieces)
+                image_pieces = pieces_by_image.get(image_id, [])
 
-                print(f"[SUCCESS] {split_name}: {len(rows)} samples")
-                logger.info(f"Processed {split_name} split: {len(rows)} samples")
+                # Convert pieces to board array
+                board_labels = _create_label_from_pieces(image_pieces)
+
+                # Create sparse representation for compatibility
+                labels_sparse = [[i, board_labels[i]] for i in range(64) if board_labels[i] != EMPTY_CLASS_ID]
+
+                # Convert local file path to GCS URL path structure
+                file_path = image_info.get('file_name', '')
+                if not file_path:
+                    logger.warning(f"Image {image_id} missing file_name, skipping")
+                    continue
+
+                sample = {
+                    'image_id': image_id,
+                    'file_path': file_path,  # Keep original for GCS URL construction
+                    'labels_dense': board_labels,
+                    'labels_sparse': labels_sparse,
+                    'piece_count': len(image_pieces),
+                    'board_dims': (8, 8),
+                    'num_classes': NUM_CLASSES
+                }
+
+                samples.append(sample)
 
             except Exception as e:
-                error_msg = f"Error processing {split_name} split: {e}"
-                logger.error(error_msg)
-                print(f"[ERROR] {error_msg}")
+                logger.warning(f"Error processing image {image_id}: {e}")
+                continue
+
+        print(f"[SUCCESS] Created {len(samples)} samples from {len(images_data)} images")
+        logger.info(f"Created {len(samples)} samples")
+
+        # 7. Split into train/val/test
+        print("[SPLIT] Splitting into train/val/test...")
+
+        total_samples = len(samples)
+        if total_samples == 0:
+            logger.error("No valid samples created")
+            return False
+
+        train_split_idx = int(total_samples * 0.8)
+        val_split_idx = int(total_samples * 0.9)
+
+        train_samples = samples[:train_split_idx]
+        val_samples = samples[train_split_idx:val_split_idx]
+        test_samples = samples[val_split_idx:]
+
+        print(f"[SPLIT] Train: {len(train_samples)}, Val: {len(val_samples)}, Test: {len(test_samples)}")
+        logger.info(f"Split - Train: {len(train_samples)}, Val: {len(val_samples)}, Test: {len(test_samples)}")
+
+        # 8. Save JSONL files
+        datasets = {
+            'train': train_samples,
+            'val': val_samples,
+            'test': test_samples
+        }
+
+        for split_name, split_samples in datasets.items():
+            output_path = LOCAL_PREPROCESSED_BASE / f"index_{split_name}.jsonl"
+
+            print(f"[SAVE] Writing {split_name} data to {output_path}...")
+
+            try:
+                with open(output_path, 'w', encoding='utf-8') as f:
+                    for sample in split_samples:
+                        f.write(json.dumps(sample) + '\n')
+
+                logger.info(f"Saved {len(split_samples)} samples to {output_path}")
+
+            except Exception as e:
+                logger.error(f"Failed to save {split_name} data: {e}")
                 return False
 
-        # Write JSONL files
-        print("[SAVE] Writing preprocessed data files...")
-        for split_name, rows in splits_data.items():
-            jsonl_path = LOCAL_CACHE_DIR / f"index_{split_name}.jsonl"
-            if not write_jsonl(jsonl_path, rows):
-                return False
-            print(f"[SUCCESS] Saved {split_name} data: {jsonl_path}")
+        # 9. Validation - check some samples
+        print("[VALIDATE] Performing validation checks...")
 
-        # Summary
-        total_samples = sum(len(rows) for rows in splits_data.values())
-        print(f"\n[COMPLETE] Preprocessing finished successfully!")
-        print(f"[SUMMARY] Total samples: {total_samples}")
-        print(f"[SUMMARY] Train: {len(splits_data['train'])}")
-        print(f"[SUMMARY] Val: {len(splits_data['val'])}")
-        print(f"[SUMMARY] Test: {len(splits_data['test'])}")
-        print(f"[SUMMARY] Output directory: {LOCAL_CACHE_DIR}")
+        # Check that we have reasonable piece distributions
+        total_pieces = sum(len(pieces_by_image.get(img_id, [])) for img_id in image_id_to_info.keys())
+        avg_pieces_per_image = total_pieces / len(samples) if samples else 0
 
-        logger.info(f"Preprocessing complete - {total_samples} total samples processed")
+        print(f"[STATS] Total pieces: {total_pieces}")
+        print(f"[STATS] Average pieces per image: {avg_pieces_per_image:.1f}")
+
+        # Check for completely empty boards (suspicious)
+        empty_boards = sum(1 for sample in samples if sample['piece_count'] == 0)
+        if empty_boards > len(samples) * 0.1:  # More than 10% empty
+            logger.warning(
+                f"High number of empty boards: {empty_boards}/{len(samples)} ({100 * empty_boards / len(samples):.1f}%)")
+
+        print(f"[STATS] Empty boards: {empty_boards}/{len(samples)} ({100 * empty_boards / len(samples):.1f}%)")
+
+        print("[SUCCESS] Preprocessing completed successfully!")
+        logger.info("Preprocessing completed successfully")
         return True
 
     except Exception as e:
-        error_msg = f"Fatal error during preprocessing: {e}"
-        logger.error(error_msg)
-        print(f"[FATAL] {error_msg}")
+        logger.error(f"Preprocessing failed: {e}")
+        print(f"[ERROR] Preprocessing failed: {e}")
         return False
 
 
-def main():
-    """Main preprocessing function."""
+def main() -> bool:
+    """Main execution function for the preprocessing script."""
     print("=" * 70)
-    print("Chess Dataset Preprocessing - GCS Version")
+    print("ChessReD Data Preprocessing")
     print("=" * 70)
-
-    # Setup logging
-    logger = setup_logging()
-    logger.info("Starting chess dataset preprocessing")
 
     try:
-        # Step 1: Check if preprocessed data already exists
-        if check_preprocessed_exists():
-            print("\n[INFO] Preprocessed data already exists on GCS!")
-            print("[INFO] Skipping preprocessing - data will be downloaded during training.")
-            print("[INFO] If you need to recreate the preprocessed data, please contact the dataset maintainer.")
-            logger.info("Preprocessed data exists on GCS - skipping preprocessing")
+        # Step 1: Check if preprocessed data already exists on GCS
+        print(f"\n[CHECK] Checking for existing preprocessed data on GCS...")
+
+        if check_preprocessed_data_exists():
+            print(f"\n[SKIP] Preprocessed data already exists on GCS!")
+            print(f"[INFO] Training will download this data automatically.")
+            print(f"[INFO] If you want to recreate the data, delete it from GCS first.")
+            logger.info("Preprocessed data already exists on GCS, skipping preprocessing")
             return True
 
-        # Step 2: Data doesn't exist, so we need to create it
-        print("\n[INFO] Preprocessed data not found on GCS.")
-        print("[INFO] Downloading annotations and creating preprocessed data locally...")
-        logger.info("Preprocessed data not found - starting local preprocessing")
+        # Step 2: Download and preprocess
+        print(f"\n[START] No preprocessed data found. Starting preprocessing...")
 
-        # Step 3: Download and preprocess
         if not download_and_preprocess():
-            print("\n[FATAL] Preprocessing failed!")
+            print(f"\n[FATAL] Preprocessing failed!")
             logger.error("Preprocessing failed")
             return False
 
-        # Step 4: Success message
-        print(f"\n[SUCCESS] Preprocessing completed successfully!")
-        print(f"[INFO] Data saved locally to: {LOCAL_CACHE_DIR}")
-        print(f"[INFO] This data will be used for training.")
-        print(f"\n[NOTE] To share this preprocessed data:")
-        print(f"       1. Upload the contents of {LOCAL_CACHE_DIR} to:")
-        print(f"          {GCS_PREPROCESSED_BASE}/")
-        print(f"       2. Then future runs will skip preprocessing automatically.")
+        # Step 3: Success message
+        print(f"\n" + "=" * 70)
+        print(f"[SUCCESS] Preprocessing completed successfully!")
+        print(f"=" * 70)
+        print(f"[INFO] Local cache: {LOCAL_CACHE_DIR}")
+        print(f"[INFO] Files created:")
+
+        created_files = [
+            "class_order.json",
+            "index_train.jsonl",
+            "index_val.jsonl",
+            "index_test.jsonl"
+        ]
+
+        for filename in created_files:
+            filepath = LOCAL_CACHE_DIR / filename
+            if filepath.exists():
+                size_kb = filepath.stat().st_size / 1024
+                print(f"  • {filename}: {size_kb:.1f} KB")
+
+        print(f"\n[NEXT STEPS]")
+        print(f"1. Run train.py to start training with this data")
+        print(f"2. Optional: Upload preprocessed data to GCS to share with others:")
+        print(f"   - Upload contents of {LOCAL_CACHE_DIR}/ to:")
+        print(f"   - {GCS_PREPROCESSED_BASE}/")
+        print(f"   - Then future runs will skip preprocessing automatically")
 
         logger.info("Preprocessing completed successfully")
         return True
 
     except KeyboardInterrupt:
-        print("\n[INTERRUPT] Preprocessing interrupted by user")
+        print(f"\n[INTERRUPT] Preprocessing interrupted by user")
         logger.info("Preprocessing interrupted by user")
         return False
 
@@ -448,8 +444,11 @@ def main():
         error_msg = f"Unexpected error: {e}"
         print(f"\n[FATAL] {error_msg}")
         logger.error(error_msg)
+
         import traceback
-        logger.error(f"Traceback: {traceback.format_exc()}")
+        traceback_str = traceback.format_exc()
+        logger.error(f"Traceback: {traceback_str}")
+
         return False
 
 

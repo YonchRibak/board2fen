@@ -1,4 +1,4 @@
-# api/streamlit_config.py - Configuration settings
+# api/config.py - Configuration settings
 
 import os
 from pathlib import Path
@@ -11,9 +11,9 @@ DEFAULT_CORS_METHODS = ("*",)
 DEFAULT_CORS_HEADERS = ("*",)
 DEFAULT_PIECE_CLASSES = (
     "empty",
-    "black_bishop", "black_king", "black_knight", "black_pawn",
-    "black_queen", "black_rook", "white_bishop", "white_king",
-    "white_knight", "white_pawn", "white_queen", "white_rook",
+    "black-bishop", "black-king", "black-knight", "black-pawn",
+    "black-queen", "black-rook", "white-bishop", "white-king",
+    "white-knight", "white-pawn", "white-queen", "white-rook",
 )
 DEFAULT_IMAGE_FORMATS = ("jpg", "jpeg", "png", "bmp")
 
@@ -54,10 +54,19 @@ class Settings(BaseSettings):
     db_pool_size: int = Field(default=5)
     db_max_overflow: int = Field(default=10)
 
-    # Model
-    model_path: str = Field(default="api/final_model.keras")
-    model_input_width: int = Field(default=512)
-    model_input_height: int = Field(default=512)
+    # Model - Updated to support URLs
+    # model_path: str = Field(
+    #     default="https://storage.googleapis.com/chess_board_cllassification_model/final_light_quick_20250903.keras")
+    model_path: str = Field(
+        default="api/cnn_models/final_light_quick_20250903.keras")
+
+    model_input_width: int = Field(default=256)
+    model_input_height: int = Field(default=256)
+
+    # Model caching settings
+    model_cache_dir: str = Field(default="./model_cache")
+    model_cache_enabled: bool = Field(default=True)
+    model_download_timeout: int = Field(default=300)  # 5 minutes
 
     piece_classes: tuple[str, ...] = Field(default=DEFAULT_PIECE_CLASSES)
 
@@ -99,10 +108,32 @@ class Settings(BaseSettings):
 
     @property
     def absolute_model_path(self) -> Path:
+        """For backward compatibility - returns path for local files"""
+        if self.is_model_url:
+            # Return cached model path
+            return self.model_cache_path
+
         model_path = Path(self.model_path)
         if model_path.is_absolute():
             return model_path
         return Path(__file__).parent.parent / model_path
+
+    @property
+    def is_model_url(self) -> bool:
+        """Check if model_path is a URL"""
+        return self.model_path.startswith(('http://', 'https://'))
+
+    @property
+    def model_cache_path(self) -> Path:
+        """Path where the downloaded model will be cached"""
+        cache_dir = Path(self.model_cache_dir)
+        if self.is_model_url:
+            # Generate filename from URL
+            import hashlib
+            url_hash = hashlib.md5(self.model_path.encode()).hexdigest()[:8]
+            model_filename = f"cached_model_{url_hash}.keras"
+            return cache_dir / model_filename
+        return cache_dir / "local_model.keras"
 
 
 class DevelopmentSettings(Settings):

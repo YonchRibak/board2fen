@@ -92,13 +92,20 @@ async def startup_event():
     global chess_pipeline
 
     try:
+        # DEBUG: Print configuration info
+        logger.info(f"🔧 Model path from config: {settings.model_path}")
+        logger.info(f"🔧 Is model URL: {settings.is_model_url}")
+        logger.info(f"🔧 Model cache path: {settings.model_cache_path}")
+        logger.info(f"🔧 Cache enabled: {settings.model_cache_enabled}")
+
         # Check database connection
         if not check_database_connection():
             raise Exception("Database connection failed")
 
         # Initialize chess pipeline with configured model path
-        chess_pipeline = ChessPipelineService(model_path=str(settings.absolute_model_path))
-        logger.info(f"♟️ Chess pipeline service initialized with model: {settings.absolute_model_path}")
+        # Use settings.model_path instead of settings.absolute_model_path for URL support
+        chess_pipeline = ChessPipelineService(model_path=settings.model_path)
+        logger.info(f"♟️ Chess pipeline service initialized with model: {settings.model_path}")
 
         # Log configuration info
         logger.info(f"🔧 Environment: {os.getenv('ENVIRONMENT', 'development')}")
@@ -567,6 +574,91 @@ async def debug_model_loading():
         debug_info["global_pipeline_model_exists"] = chess_pipeline.model_path.exists()
 
     return debug_info
+
+
+@app.get("/debug/download")
+async def debug_download():
+    """Debug the model download process"""
+    import requests
+    from pathlib import Path
+
+    url = "https://storage.googleapis.com/chess_board_cllassification_model/final_light_quick_20250903.keras"
+    cache_path = settings.model_cache_path
+
+    debug_info = {
+        "url": url,
+        "cache_path": str(cache_path),
+        "cache_dir_exists": cache_path.parent.exists(),
+        "cache_file_exists": cache_path.exists(),
+        "url_accessible": False,
+        "url_status": None,
+        "url_size": None,
+        "download_test": None
+    }
+
+    # Test URL accessibility
+    try:
+        response = requests.head(url, timeout=10)
+        debug_info["url_accessible"] = response.status_code == 200
+        debug_info["url_status"] = response.status_code
+        debug_info["url_size"] = response.headers.get('content-length', 'unknown')
+    except Exception as e:
+        debug_info["url_error"] = str(e)
+
+    # Test download (first 1MB only)
+    try:
+        response = requests.get(url, timeout=30, stream=True, headers={'Range': 'bytes=0-1048576'})
+        if response.status_code in [200, 206]:
+            debug_info["download_test"] = "Success - first 1MB downloaded"
+        else:
+            debug_info["download_test"] = f"Failed - status {response.status_code}"
+    except Exception as e:
+        debug_info["download_test"] = f"Error: {str(e)}"
+
+    return debug_info
+
+@app.get("/debug/classes")
+async def debug_class_order():
+    """Debug endpoint to check class order"""
+    return {
+        "inference_classes": settings.piece_classes,
+        "inference_class_count": len(settings.piece_classes),
+        "model_output_shape": chess_pipeline.model.output_shape if chess_pipeline and chess_pipeline.model else None,
+        "expected_classes": 13  # From your model output shape (64, 13)
+    }
+
+
+@app.get("/debug/model-test")
+async def test_model_predictions():
+    """Test model with known input"""
+    if not chess_pipeline:
+        return {"error": "Pipeline not loaded"}
+
+    # Create a test input (all zeros, all ones, random)
+    import numpy as np
+
+    test_inputs = {
+        "zeros": np.zeros((1, 256, 256, 3), dtype=np.float32),
+        "ones": np.ones((1, 256, 256, 3), dtype=np.float32),
+        "half": np.full((1, 256, 256, 3), 0.5, dtype=np.float32),
+        "random": np.random.random((1, 256, 256, 3)).astype(np.float32)
+    }
+
+    results = {}
+    for name, test_input in test_inputs.items():
+        try:
+            prediction = chess_pipeline.model.predict(test_input, verbose=0)
+            results[name] = {
+                "shape": prediction.shape,
+                "min": float(prediction.min()),
+                "max": float(prediction.max()),
+                "mean": float(prediction.mean()),
+                "std": float(prediction.std())
+            }
+        except Exception as e:
+            results[name] = {"error": str(e)}
+
+    return results
 
 @app.get("/config/info", response_model=ConfigInfoResponse)
 async def get_config_info():

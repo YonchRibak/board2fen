@@ -4,10 +4,12 @@ import sys
 import hashlib
 import logging
 import time
+import requests
 from io import BytesIO
 from typing import Optional, List, Dict, Any, Tuple
 from pathlib import Path
 from dataclasses import dataclass
+import urllib.parse
 
 import numpy as np
 import cv2
@@ -40,6 +42,143 @@ class PredictionResult:
     board_detected: Optional[bool] = None
     error_message: Optional[str] = None
     processing_steps: Optional[Dict[str, Any]] = None
+
+
+# ============================================================================
+# MODEL DOWNLOAD AND CACHING UTILITIES
+# ============================================================================
+
+class ModelDownloader:
+    """Utility class for downloading and caching models from URLs"""
+
+    @staticmethod
+    def download_model(url: str, cache_path: Path, timeout: int = 300) -> bool:
+        """
+        Download model from URL and save to cache path
+
+        Args:
+            url: The model URL
+            cache_path: Local path where the model should be saved
+            timeout: Download timeout in seconds
+
+        Returns:
+            bool: True if download successful, False otherwise
+        """
+        try:
+            # Create cache directory if it doesn't exist
+            cache_path.parent.mkdir(parents=True, exist_ok=True)
+
+            logger.info(f"🔄 Downloading model from {url}")
+            logger.info(f"📁 Cache location: {cache_path}")
+
+            # Download with streaming to handle large files
+            response = requests.get(url, timeout=timeout, stream=True)
+            response.raise_for_status()
+
+            # Get total file size if available
+            total_size = int(response.headers.get('content-length', 0))
+            downloaded_size = 0
+
+            with open(cache_path, 'wb') as f:
+                for chunk in response.iter_content(chunk_size=8192):
+                    if chunk:
+                        f.write(chunk)
+                        downloaded_size += len(chunk)
+
+                        # Log progress for large files
+                        if total_size > 0 and downloaded_size % (1024 * 1024 * 10) == 0:  # Every 10MB
+                            progress = (downloaded_size / total_size) * 100
+                            logger.info(f"📥 Download progress: {progress:.1f}% ({downloaded_size // (1024 * 1024)}MB)")
+
+            file_size_mb = cache_path.stat().st_size / (1024 * 1024)
+            logger.info(f"✅ Model downloaded successfully ({file_size_mb:.1f}MB)")
+
+            return True
+
+        except requests.exceptions.RequestException as e:
+            logger.error(f"❌ Network error downloading model: {e}")
+            # Clean up partial download
+            if cache_path.exists():
+                cache_path.unlink()
+            return False
+
+        except Exception as e:
+            logger.error(f"❌ Error downloading model: {e}")
+            # Clean up partial download
+            if cache_path.exists():
+                cache_path.unlink()
+            return False
+
+    @staticmethod
+    def validate_cached_model(cache_path: Path) -> bool:
+        """
+        Validate that a cached model file is complete and loadable
+
+        Args:
+            cache_path: Path to cached model file
+
+        Returns:
+            bool: True if model is valid, False otherwise
+        """
+        try:
+            if not cache_path.exists():
+                return False
+
+            # Check if file is empty
+            if cache_path.stat().st_size == 0:
+                logger.warning(f"⚠️ Cached model file is empty: {cache_path}")
+                return False
+
+            # Try to load the model to verify it's valid
+            test_model = tf.keras.models.load_model(str(cache_path))
+            logger.debug(f"✅ Cached model validation successful: {cache_path}")
+            return True
+
+        except Exception as e:
+            logger.warning(f"⚠️ Cached model validation failed: {e}")
+            return False
+
+    @staticmethod
+    def get_model_path(model_path_or_url: str) -> Optional[Path]:
+        """
+        Get the local path for a model, downloading if necessary
+
+        Args:
+            model_path_or_url: Either a local path or URL to model
+
+        Returns:
+            Optional[Path]: Local path to model, or None if unavailable
+        """
+        # If it's a local path, return as-is
+        if not model_path_or_url.startswith(('http://', 'https://')):
+            local_path = Path(model_path_or_url)
+            if local_path.is_absolute():
+                return local_path
+            return Path(__file__).parent.parent / local_path
+
+        # It's a URL - handle caching
+        cache_path = settings.model_cache_path
+
+        # Check if we have a valid cached version
+        if settings.model_cache_enabled and ModelDownloader.validate_cached_model(cache_path):
+            logger.info(f"🎯 Using cached model: {cache_path}")
+            return cache_path
+
+        # Download the model
+        if ModelDownloader.download_model(
+                model_path_or_url,
+                cache_path,
+                timeout=settings.model_download_timeout
+        ):
+            # Validate the downloaded model
+            if ModelDownloader.validate_cached_model(cache_path):
+                return cache_path
+            else:
+                logger.error("❌ Downloaded model failed validation")
+                return None
+        else:
+            logger.error("❌ Failed to download model")
+            return None
 
 
 # ============================================================================
@@ -93,21 +232,26 @@ class ImageProcessor:
             return None
 
     @staticmethod
-    def preprocess_for_model(image: np.ndarray, target_size: Tuple[int, int] = (224, 224)) -> np.ndarray:
-        """Preprocess image for the end-to-end model"""
+    def preprocess_for_model(image: np.ndarray, target_size: Tuple[int, int] = (256, 256)) -> np.ndarray:
+        """Preprocess image for the end-to-end model - matches training preprocessing"""
         try:
-            # Resize to target size
-            resized = cv2.resize(image, target_size, interpolation=cv2.INTER_AREA)
+            logger.info(f"Input image shape: {image.shape}, dtype: {image.dtype}")
+            logger.info(f"Input image range: [{image.min()}, {image.max()}]")
 
-            # Normalize to [0, 1]
+            # Use LINEAR interpolation to match TensorFlow's bilinear method
+            resized = cv2.resize(image, target_size, interpolation=cv2.INTER_LINEAR)
+            logger.info(f"Resized image shape: {resized.shape}, dtype: {resized.dtype}")
+
+            # Normalize to [0, 1] - exact same as training
             normalized = resized.astype(np.float32) / 255.0
+            logger.info(f"Normalized image range: [{normalized.min():.4f}, {normalized.max():.4f}]")
+            logger.info(f"Normalized image mean: {normalized.mean():.4f}")
 
             return normalized
 
         except Exception as e:
             logger.error(f"Failed to preprocess image: {e}")
             raise e
-
 
 def resize_image_for_model(image_bytes: bytes) -> bytes:
     """
@@ -251,35 +395,49 @@ class FENValidator:
 
 
 # ============================================================================
-# CHESS PIPELINE SERVICE (SIMPLIFIED FOR END-TO-END MODEL)
+# CHESS PIPELINE SERVICE (UPDATED FOR URL SUPPORT)
 # ============================================================================
 
 class ChessPipelineService:
     """
-    Simplified service for end-to-end chess board to FEN conversion
-    Uses a single CNN model that processes the entire chess board image
+    Updated service for end-to-end chess board to FEN conversion
+    Now supports loading models from URLs with caching
     """
 
     def __init__(self, model_path: str):
-        """Initialize the chess pipeline with model path"""
-        self.model_path = Path(model_path)
+        """Initialize the chess pipeline with model path or URL"""
+        self.model_path_or_url = model_path
         self.model = None
         self.model_loaded = False
         self.piece_classes = list(settings.piece_classes)
+        self.actual_model_path = None  # Will store the actual local path after download
 
         self._load_model()
 
     def _load_model(self):
-        """Load the trained end-to-end model"""
+        """Load the trained end-to-end model from local path or URL"""
         try:
+            # Get the local path for the model (downloading if necessary)
+            local_model_path = ModelDownloader.get_model_path(self.model_path_or_url)
+
+            if local_model_path is None:
+                logger.error(f"❌ Failed to get model from: {self.model_path_or_url}")
+                return
+
+            self.actual_model_path = local_model_path
+
             # Check if model file exists
-            if not self.model_path.exists():
-                logger.error(f"❌ Model file not found: {self.model_path}")
+            if not local_model_path.exists():
+                logger.error(f"❌ Model file not found: {local_model_path}")
                 return
 
             # Load the model
-            self.model = tf.keras.models.load_model(str(self.model_path))
-            logger.info(f"✅ End-to-end chess model loaded from {self.model_path}")
+            logger.info(f"🔄 Loading model from: {local_model_path}")
+            self.model = tf.keras.models.load_model(str(local_model_path))
+
+            logger.info(f"✅ End-to-end chess model loaded successfully")
+            logger.info(f"   Source: {self.model_path_or_url}")
+            logger.info(f"   Local path: {local_model_path}")
             logger.info(f"   Model input shape: {self.model.input_shape}")
             logger.info(f"   Model output shape: {self.model.output_shape}")
 
@@ -435,6 +593,19 @@ class ChessPipelineService:
         board_matrix = [[''] * 8 for _ in range(8)]
         confidences = []
 
+        # DEBUG: Log raw model output statistics
+        logger.info(f"Model output shape: {output.shape}")
+        logger.info(f"Model output range: [{output.min():.4f}, {output.max():.4f}]")
+        logger.info(f"Model output mean: {output.mean():.4f}")
+
+        # DEBUG: Log first few predictions
+        for i in range(min(5, 64)):  # First 5 squares
+            class_probs = output[i]
+            predicted_class_idx = np.argmax(class_probs)
+            confidence = float(class_probs[predicted_class_idx])
+            logger.info(
+                f"Square {i}: class={predicted_class_idx}, confidence={confidence:.4f}, piece={self.piece_classes[predicted_class_idx] if predicted_class_idx < len(self.piece_classes) else 'unknown'}")
+
         for i in range(64):
             # Get the most likely class for this square
             class_probs = output[i]
@@ -450,23 +621,21 @@ class ChessPipelineService:
                 piece_name = self.piece_classes[predicted_class_idx]
                 piece_symbol = self._piece_name_to_symbol(piece_name)
 
-                # IMPORTANT: Now that 'empty' is a valid class that returns '',
-                # we need to distinguish between:
-                # 1. High confidence empty prediction (model says it's empty)
-                # 2. Low confidence piece prediction (uncertain, treat as empty)
-
+                # TEMPORARILY LOWER THRESHOLD FOR DEBUGGING
                 if piece_symbol != '':  # It's a piece
-                    if confidence > 0.3:  # Increased threshold for pieces
+                    if confidence > 0.1:  # LOWERED from 0.3 for debugging
                         board_matrix[rank][file] = piece_symbol
                         confidences.append(confidence)
-                else:  # It's empty (piece_symbol == '')
-                    # Empty squares don't need to be added to board_matrix (already '')
-                    # But we might want to track high-confidence empty predictions
-                    if piece_name.lower() == 'empty' and confidence > 0.5:
-                        confidences.append(confidence)  # Track confident empty predictions
+                        logger.debug(f"Placed {piece_symbol} at [{rank}][{file}] with confidence {confidence:.4f}")
+                else:  # It's empty
+                    if piece_name.lower() == 'empty' and confidence > 0.1:  # LOWERED from 0.5
+                        confidences.append(confidence)
 
         # Calculate average confidence and convert to Python float
         avg_confidence = float(np.mean(confidences)) if confidences else 0.0
+
+        logger.info(f"Final board has {sum(1 for row in board_matrix for cell in row if cell != '')} pieces")
+        logger.info(f"Average confidence: {avg_confidence:.4f}")
 
         return board_matrix, avg_confidence
 
