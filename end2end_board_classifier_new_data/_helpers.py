@@ -8,7 +8,7 @@ import time
 from pathlib import Path
 from typing import Tuple, List, Dict, Any, Optional
 from urllib.parse import urljoin
-
+import platform
 import tensorflow as tf
 from tensorflow.keras import layers, models, callbacks
 import numpy as np
@@ -62,11 +62,26 @@ GCS_PREPROCESSED_BASE = f"{GCS_BUCKET_BASE}/chessred_preprocessed"
 GCS_IMAGES_BASE = f"{GCS_BUCKET_BASE}/chessred/images"
 
 
+def get_platform_config():
+    """Detect platform and return appropriate settings."""
+    system = platform.system().lower()
+    machine = platform.machine().lower()
+
+    is_mac_m1_m2 = system == "darwin" and ("arm" in machine or "aarch64" in machine)
+
+    return {
+        "is_mac_m1_m2": is_mac_m1_m2,
+        "system": system,
+        "machine": machine
+    }
+
 def get_mode_config(mode: str) -> Dict[str, Any]:
     """
     Returns a dict of hyperparams for 'quick' | 'thorough' | 'production'.
     Tweak to your taste. All modes share the same model; they differ in epochs, batch size, etc.
     """
+
+
     base = dict(
         mode=mode,
         seed=42,
@@ -113,7 +128,12 @@ def get_mode_config(mode: str) -> Dict[str, Any]:
             lr_drop_epoch=120,
             early_stop_patience=25,
         )
-    # 'thorough' uses defaults
+    elif mode == "thorough":
+        base.update(
+            batch_size=2,
+            input_shape=(224, 224, 3),
+            shuffle_buffer=128,
+        )
     return base
 
 

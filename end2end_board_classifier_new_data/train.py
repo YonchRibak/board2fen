@@ -601,43 +601,36 @@ Final Metrics:
 
 
 def configure_gpu_memory():
-    """Configure GPU memory growth to prevent OOM errors and disable XLA."""
+    """Configure GPU memory for different platforms."""
     try:
-        # Disable XLA to avoid compilation issues
-        os.environ['TF_XLA_FLAGS'] = '--tf_xla_auto_jit=0'
-        os.environ['XLA_FLAGS'] = '--xla_gpu_cuda_data_dir=""'
+        import platform
+        system = platform.system().lower()
+        machine = platform.machine().lower()
+
+        is_mac_m1_m2 = system == "darwin" and ("arm" in machine or "aarch64" in machine)
 
         gpus = tf.config.experimental.list_physical_devices('GPU')
+
         if gpus:
             try:
-                # Enable memory growth for all GPUs
                 for gpu in gpus:
                     tf.config.experimental.set_memory_growth(gpu, True)
 
-                # Disable XLA JIT compilation
-                tf.config.optimizer.set_jit(False)
-
-                message = f"[GPU] Configured memory growth for {len(gpus)} GPU(s), XLA disabled"
-                print(message)
-                if logger:
-                    logger.info(message)
+                if is_mac_m1_m2:
+                    print(f"[M2 GPU] Configured memory growth for {len(gpus)} GPU(s)")
+                else:
+                    print(f"[GPU] Configured memory growth for {len(gpus)} GPU(s)")
 
             except RuntimeError as e:
-                error_msg = f"GPU memory configuration failed: {e}"
-                print(f"[WARNING] {error_msg}")
-                if logger:
-                    logger.warning(error_msg)
+                print(f"[WARNING] GPU memory configuration failed: {e}")
         else:
-            message = "No GPUs detected, using CPU"
-            print(f"[INFO] {message}")
-            if logger:
-                logger.info(message)
+            print(f"[INFO] No GPUs detected, using CPU")
+
+        # Disable XLA compilation for stability
+        tf.config.optimizer.set_jit(False)
 
     except Exception as e:
-        error_msg = f"Error during GPU configuration: {e}"
-        print(f"[ERROR] {error_msg}")
-        if logger:
-            logger.error(error_msg)
+        print(f"[ERROR] Error during GPU configuration: {e}")
 
 def prompt_model():
     """Prompt user to select model architecture."""
