@@ -10,6 +10,11 @@ from pathlib import Path
 from typing import Dict, List, Tuple, Set
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import threading
+import os
+
+os.environ['TF_XLA_FLAGS'] = '--tf_xla_enable_xla_devices=false'
+os.environ['XLA_FLAGS'] = '--xla_disable_all_hlo_passes'
+os.environ['TF_DISABLE_XLA'] = '1'
 
 import tensorflow as tf
 import numpy as np
@@ -596,8 +601,12 @@ Final Metrics:
 
 
 def configure_gpu_memory():
-    """Configure GPU memory growth to prevent OOM errors."""
+    """Configure GPU memory growth to prevent OOM errors and disable XLA."""
     try:
+        # Disable XLA to avoid compilation issues
+        os.environ['TF_XLA_FLAGS'] = '--tf_xla_auto_jit=0'
+        os.environ['XLA_FLAGS'] = '--xla_gpu_cuda_data_dir=""'
+
         gpus = tf.config.experimental.list_physical_devices('GPU')
         if gpus:
             try:
@@ -605,7 +614,10 @@ def configure_gpu_memory():
                 for gpu in gpus:
                     tf.config.experimental.set_memory_growth(gpu, True)
 
-                message = f"[GPU] Configured memory growth for {len(gpus)} GPU(s)"
+                # Disable XLA JIT compilation
+                tf.config.optimizer.set_jit(False)
+
+                message = f"[GPU] Configured memory growth for {len(gpus)} GPU(s), XLA disabled"
                 print(message)
                 if logger:
                     logger.info(message)
@@ -626,7 +638,6 @@ def configure_gpu_memory():
         print(f"[ERROR] {error_msg}")
         if logger:
             logger.error(error_msg)
-
 
 def prompt_model():
     """Prompt user to select model architecture."""
@@ -859,17 +870,21 @@ def main():
 
         try:
             # Enable mixed precision if available and using large model
-            if model_type == "resnext":
-                try:
-                    policy = tf.keras.mixed_precision.Policy('mixed_float16')
-                    tf.keras.mixed_precision.set_global_policy(policy)
-                    message = "Mixed precision enabled"
-                    print(f"[INFO] {message}")
-                    logger.info(message)
-                except Exception as mp_error:
-                    message = f"Mixed precision not available: {mp_error}, using float32"
-                    print(f"[WARNING] {message}")
-                    logger.warning(message)
+            # if model_type == "resnext":
+            #     try:
+            #         policy = tf.keras.mixed_precision.Policy('mixed_float16')
+            #         tf.keras.mixed_precision.set_global_policy(policy)
+            #         message = "Mixed precision enabled"
+            #         print(f"[INFO] {message}")
+            #         logger.info(message)
+            #     except Exception as mp_error:
+            #         message = f"Mixed precision not available: {mp_error}, using float32"
+            #         print(f"[WARNING] {message}")
+            #         logger.warning(message)
+
+            # Force float32 for stability
+            tf.keras.mixed_precision.set_global_policy('float32')
+            print("[INFO] Using float32 precision for stability")
 
             loss = tf.keras.losses.CategoricalCrossentropy(axis=-1)
             optimizer = tf.keras.optimizers.Adam(learning_rate=cfg["lr_start"])

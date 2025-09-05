@@ -58,7 +58,7 @@ class Settings(BaseSettings):
     # model_path: str = Field(
     #     default="https://storage.googleapis.com/chess_board_cllassification_model/final_light_quick_20250903.keras")
     model_path: str = Field(
-        default="api/cnn_models/final_light_quick_20250903.keras")
+        default="https://storage.googleapis.com/chess_board_cllassification_model/final_light_quick_20250905.keras")
 
     model_input_width: int = Field(default=256)
     model_input_height: int = Field(default=256)

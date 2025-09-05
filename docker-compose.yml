@@ -26,7 +26,7 @@ services:
       ENVIRONMENT: development
       DATABASE_URL: postgresql+psycopg2://${POSTGRES_USER:-chessuser}:${POSTGRES_PASSWORD:-chesspass}@db:5432/${POSTGRES_DB:-chessdb}
       # Fixed MODEL_PATH - added /app prefix
-      MODEL_PATH: api/cnn_models/final_light_quick_20250903.keras
+      MODEL_PATH: https://storage.googleapis.com/chess_board_cllassification_model/final_light_quick_20250905.keras
     ports:
       - "8081:8000"
     volumes:

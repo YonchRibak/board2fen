@@ -676,17 +676,24 @@ class ChessPipelineService:
         return self._get_empty_board(), 0.5
 
     def _piece_name_to_symbol(self, piece_name: str) -> str:
-        """Convert piece class name to FEN symbol"""
+        """Convert piece class name to FEN symbol - Fixed to handle both hyphens and underscores"""
+
         # Handle different possible naming conventions
         name_to_symbol = {
             # Empty square - MUST be handled first and return empty string
             'empty': '', 'none': '', 'blank': '', '': '',
 
-            # Standard naming
+            # Standard naming with underscores (original)
             'white_king': 'K', 'white_queen': 'Q', 'white_rook': 'R',
             'white_bishop': 'B', 'white_knight': 'N', 'white_pawn': 'P',
             'black_king': 'k', 'black_queen': 'q', 'black_rook': 'r',
             'black_bishop': 'b', 'black_knight': 'n', 'black_pawn': 'p',
+
+            # FIXED: Add hyphen versions (what your model actually outputs)
+            'white-king': 'K', 'white-queen': 'Q', 'white-rook': 'R',
+            'white-bishop': 'B', 'white-knight': 'N', 'white-pawn': 'P',
+            'black-king': 'k', 'black-queen': 'q', 'black-rook': 'r',
+            'black-bishop': 'b', 'black-knight': 'n', 'black-pawn': 'p',
 
             # Alternative naming (direct piece symbols)
             'K': 'K', 'Q': 'Q', 'R': 'R', 'B': 'B', 'N': 'N', 'P': 'P',
@@ -699,7 +706,9 @@ class ChessPipelineService:
         if piece_name.lower() == 'empty':
             logger.debug(f"Empty square detected: {piece_name} -> '{symbol}'")
         elif symbol == '':
-            logger.warning(f"Unknown piece class: {piece_name}")
+            logger.warning(f"Unknown piece class: '{piece_name}' - check class name format")
+        else:
+            logger.debug(f"Mapped piece: '{piece_name}' -> '{symbol}'")
 
         return symbol
 

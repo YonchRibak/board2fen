@@ -264,6 +264,213 @@ async def predict_chess_position(
         )
 
 
+@app.get("/debug/raw-prediction")
+async def debug_raw_prediction():
+    """Debug raw model predictions to understand what's happening"""
+    import numpy as np
+
+    if not chess_pipeline or not chess_pipeline.model_loaded:
+        return {"error": "Model not loaded"}
+
+    # Create a test input that should produce clear predictions
+    test_input = np.random.random((1, 256, 256, 3)).astype(np.float32)
+
+    # Get raw model output
+    raw_prediction = chess_pipeline.model.predict(test_input, verbose=0)
+
+    # Analyze the output
+    debug_info = {
+        "model_output_shape": raw_prediction.shape,
+        "output_range": [float(raw_prediction.min()), float(raw_prediction.max())],
+        "output_mean": float(raw_prediction.mean()),
+        "output_std": float(raw_prediction.std()),
+        "piece_classes": chess_pipeline.piece_classes,
+        "num_classes": len(chess_pipeline.piece_classes),
+        "squares_analysis": []
+    }
+
+    # Analyze first 8 squares in detail
+    for i in range(min(8, 64)):
+        square_probs = raw_prediction[0, i]  # Shape should be (13,)
+        predicted_class = int(np.argmax(square_probs))
+        max_confidence = float(square_probs[predicted_class])
+
+        # Get class name
+        class_name = chess_pipeline.piece_classes[predicted_class] if predicted_class < len(
+            chess_pipeline.piece_classes) else "unknown"
+
+        square_analysis = {
+            "square_index": i,
+            "square_position": f"{chr(ord('a') + (i % 8))}{8 - (i // 8)}",  # e.g., 'a8', 'b8', etc.
+            "predicted_class_index": predicted_class,
+            "predicted_class_name": class_name,
+            "confidence": max_confidence,
+            "all_probabilities": [float(p) for p in square_probs],
+            "piece_symbol": chess_pipeline._piece_name_to_symbol(class_name)
+        }
+
+        debug_info["squares_analysis"].append(square_analysis)
+
+    # Check if all predictions are too similar (indicating model problems)
+    all_predictions = raw_prediction[0]  # Shape (64, 13)
+    variance_across_squares = float(np.var(all_predictions))
+    debug_info["variance_across_squares"] = variance_across_squares
+    debug_info["predictions_too_uniform"] = variance_across_squares < 0.001
+
+    # Check confidence thresholds being used
+    debug_info["confidence_analysis"] = {
+        "squares_above_01_threshold": int(np.sum(np.max(all_predictions, axis=1) > 0.1)),
+        "squares_above_03_threshold": int(np.sum(np.max(all_predictions, axis=1) > 0.3)),
+        "squares_above_05_threshold": int(np.sum(np.max(all_predictions, axis=1) > 0.5)),
+        "max_confidence_found": float(np.max(all_predictions)),
+        "min_confidence_found": float(np.min(all_predictions))
+    }
+
+    return debug_info
+
+
+@app.get("/debug/class-mapping")
+async def debug_class_mapping():
+    """Debug the class mapping logic"""
+    if not chess_pipeline:
+        return {"error": "Pipeline not loaded"}
+
+    mapping_test = {}
+
+    for i, class_name in enumerate(chess_pipeline.piece_classes):
+        symbol = chess_pipeline._piece_name_to_symbol(class_name)
+        mapping_test[i] = {
+            "class_name": class_name,
+            "symbol": symbol,
+            "is_empty": symbol == "",
+            "is_piece": symbol != ""
+        }
+
+    return {
+        "piece_classes": chess_pipeline.piece_classes,
+        "total_classes": len(chess_pipeline.piece_classes),
+        "mapping_test": mapping_test,
+        "empty_class_indices": [i for i, cls in enumerate(chess_pipeline.piece_classes) if
+                                chess_pipeline._piece_name_to_symbol(cls) == ""]
+    }
+
+@app.post("/debug/predict-detailed")
+async def debug_predict_detailed(file: UploadFile = File(...)):
+    """Upload an image and get detailed prediction analysis"""
+
+    if not chess_pipeline or not chess_pipeline.model_loaded:
+        return {"error": "Model not loaded"}
+
+    try:
+        import numpy as np
+        image_bytes = await file.read()
+
+        # Load and preprocess image
+        from api._helpers import ImageProcessor
+        image = ImageProcessor.load_image_from_bytes(image_bytes)
+        if image is None:
+            return {"error": "Failed to load image"}
+
+        # Show preprocessing steps
+        debug_info = {
+            "original_image_shape": image.shape,
+            "original_image_range": [int(image.min()), int(image.max())],
+            "original_image_dtype": str(image.dtype)
+        }
+
+        # Preprocess
+        processed_image = ImageProcessor.preprocess_for_model(image, target_size=(256, 256))
+        debug_info.update({
+            "processed_image_shape": processed_image.shape,
+            "processed_image_range": [float(processed_image.min()), float(processed_image.max())],
+            "processed_image_dtype": str(processed_image.dtype),
+            "processed_image_mean": float(processed_image.mean()),
+            "processed_image_std": float(processed_image.std())
+        })
+
+        # Get raw model prediction
+        batch_input = np.expand_dims(processed_image, axis=0)
+        raw_prediction = chess_pipeline.model.predict(batch_input, verbose=0)
+
+        debug_info.update({
+            "raw_prediction_shape": raw_prediction.shape,
+            "raw_prediction_range": [float(raw_prediction.min()), float(raw_prediction.max())],
+            "raw_prediction_mean": float(raw_prediction.mean()),
+            "raw_prediction_std": float(raw_prediction.std())
+        })
+
+        # Analyze each square's prediction
+        squares_detail = []
+        prediction_2d = raw_prediction[0]  # Remove batch dimension
+
+        for i in range(64):
+            square_probs = prediction_2d[i]
+            predicted_class_idx = int(np.argmax(square_probs))
+            max_confidence = float(square_probs[predicted_class_idx])
+
+            rank = i // 8
+            file_idx = i % 8
+            square_name = f"{chr(ord('a') + file_idx)}{8 - rank}"
+
+            class_name = chess_pipeline.piece_classes[predicted_class_idx] if predicted_class_idx < len(
+                chess_pipeline.piece_classes) else "unknown"
+            piece_symbol = chess_pipeline._piece_name_to_symbol(class_name)
+
+            # Check if this square would be placed based on current thresholds
+            would_place_piece = False
+            if piece_symbol != '':  # It's a piece
+                would_place_piece = max_confidence > 0.1  # Current threshold for pieces
+            else:  # It's empty
+                would_place_piece = max_confidence > 0.1  # Current threshold for empty
+
+            squares_detail.append({
+                "square": square_name,
+                "board_position": [rank, file_idx],
+                "predicted_class": class_name,
+                "piece_symbol": piece_symbol,
+                "confidence": max_confidence,
+                "would_place": would_place_piece,
+                "top_3_predictions": [
+                    {
+                        "class": chess_pipeline.piece_classes[idx] if idx < len(
+                            chess_pipeline.piece_classes) else "unknown",
+                        "confidence": float(square_probs[idx])
+                    }
+                    for idx in np.argsort(square_probs)[-3:][::-1]  # Top 3
+                ]
+            })
+
+        debug_info["squares_detail"] = squares_detail
+
+        # Summary statistics
+        all_confidences = [s["confidence"] for s in squares_detail]
+        debug_info["confidence_summary"] = {
+            "max_confidence": max(all_confidences),
+            "min_confidence": min(all_confidences),
+            "mean_confidence": sum(all_confidences) / len(all_confidences),
+            "squares_above_01": len([c for c in all_confidences if c > 0.1]),
+            "squares_above_03": len([c for c in all_confidences if c > 0.3]),
+            "squares_above_05": len([c for c in all_confidences if c > 0.5])
+        }
+
+        # Run through the actual pipeline for comparison
+        pipeline_result = chess_pipeline.predict_from_image(image_bytes)
+        debug_info["pipeline_result"] = {
+            "success": pipeline_result.success,
+            "fen": pipeline_result.fen,
+            "confidence": pipeline_result.confidence,
+            "board_matrix": pipeline_result.board_matrix
+        }
+
+        return debug_info
+
+    except Exception as e:
+        import traceback
+        return {
+            "error": str(e),
+            "traceback": traceback.format_exc()
+        }
+
 @app.post("/predict/correct", response_model=CorrectionResponse)
 async def submit_correction(
         correction: CorrectionRequest,
