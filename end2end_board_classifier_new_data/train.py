@@ -601,36 +601,41 @@ Final Metrics:
 
 
 def configure_gpu_memory():
-    """Configure GPU memory for different platforms."""
-    try:
-        import platform
-        system = platform.system().lower()
-        machine = platform.machine().lower()
+    """
+    Configure TensorFlow GPU memory settings in a cross-platform safe way.
 
-        is_mac_m1_m2 = system == "darwin" and ("arm" in machine or "aarch64" in machine)
+    - On NVIDIA/CUDA: enable memory growth (so TF doesn't grab all VRAM).
+    - On Apple Silicon (M1/M2/M3 with Metal): skip memory growth (not supported).
+    - On CPU-only setups: just prints a notice.
+    - Always disables XLA (can be unstable on macOS/Metal).
+    """
+    import platform
+    import tensorflow as tf
 
-        gpus = tf.config.experimental.list_physical_devices('GPU')
+    system = platform.system().lower()
+    machine = platform.machine().lower()
+    is_mac_m1_m2 = system == "darwin" and ("arm" in machine or "aarch64" in machine)
 
-        if gpus:
-            try:
+    gpus = tf.config.experimental.list_physical_devices("GPU")
+    if gpus:
+        try:
+            if not is_mac_m1_m2:
                 for gpu in gpus:
                     tf.config.experimental.set_memory_growth(gpu, True)
+                print(f"[CUDA] Enabled memory growth on {len(gpus)} GPU(s)")
+            else:
+                print(f"[Metal] {len(gpus)} GPU(s) detected — skipping memory growth (not supported)")
+        except RuntimeError as e:
+            print(f"[WARNING] GPU memory configuration failed: {e}")
+    else:
+        print("[INFO] No GPU detected, running on CPU")
 
-                if is_mac_m1_m2:
-                    print(f"[M2 GPU] Configured memory growth for {len(gpus)} GPU(s)")
-                else:
-                    print(f"[GPU] Configured memory growth for {len(gpus)} GPU(s)")
-
-            except RuntimeError as e:
-                print(f"[WARNING] GPU memory configuration failed: {e}")
-        else:
-            print(f"[INFO] No GPUs detected, using CPU")
-
-        # Disable XLA compilation for stability
+    # XLA (JIT) can cause issues on macOS + Metal → keep it disabled
+    try:
         tf.config.optimizer.set_jit(False)
-
+        print("[INFO] XLA disabled")
     except Exception as e:
-        print(f"[ERROR] Error during GPU configuration: {e}")
+        print(f"[WARNING] Failed to disable XLA: {e}")
 
 def prompt_model():
     """Prompt user to select model architecture."""
