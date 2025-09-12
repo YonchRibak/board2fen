@@ -1,5 +1,5 @@
 # board2fen/end2end_board_classifier/_helpers.py
-import os
+
 import math
 import json
 import logging
@@ -9,6 +9,10 @@ from pathlib import Path
 from typing import Tuple, List, Dict, Any, Optional
 from urllib.parse import urljoin
 import platform
+import os
+# Hard-disable XLA everywhere
+os.environ["TF_XLA_FLAGS"] = "--tf_xla_enable_xla_devices=false"
+os.environ["TF_ENABLE_XLA"] = "0"
 import tensorflow as tf
 from tensorflow.keras import layers, models, callbacks
 import numpy as np

@@ -11,10 +11,9 @@ from typing import Dict, List, Tuple, Set
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import threading
 import os
-
-os.environ['TF_XLA_FLAGS'] = '--tf_xla_enable_xla_devices=false'
-os.environ['XLA_FLAGS'] = '--xla_disable_all_hlo_passes'
-os.environ['TF_DISABLE_XLA'] = '1'
+# Hard-disable XLA everywhere
+os.environ["TF_XLA_FLAGS"] = "--tf_xla_enable_xla_devices=false"
+os.environ["TF_ENABLE_XLA"] = "0"
 
 import tensorflow as tf
 import numpy as np
@@ -894,6 +893,7 @@ def main():
                     tf.keras.metrics.CategoricalAccuracy(name="per_square_acc"),
                     tf.keras.metrics.TopKCategoricalAccuracy(k=1, name="top1_per_square"),
                 ],
+                jit_compile=False,
             )
 
             print(f"\n[INFO] Model Summary:")
