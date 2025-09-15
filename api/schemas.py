@@ -69,6 +69,34 @@ class RecentCorrectionsResponse(BaseModel):
     corrections: List[RecentCorrection]
 
 # ============================================================================
+# SERVICE SWITCHING SCHEMAS
+# ============================================================================
+
+class ServiceSwitchRequest(BaseModel):
+    """Request model for switching chess prediction services"""
+    service_type: str = Field(
+        ...,
+        description="Service type to switch to",
+        example="multi_model_pipeline"
+    )
+
+class ServiceSwitchResponse(BaseModel):
+    """Response model for service switching"""
+    success: bool = Field(..., description="Whether service switch was successful")
+    message: str = Field(..., description="Success or error message")
+    previous_service: str = Field(..., description="Previously active service type")
+    new_service: str = Field(..., description="Currently active service type")
+    timestamp: str = Field(..., description="Timestamp of service switch")
+
+class CurrentServiceResponse(BaseModel):
+    """Response model for current service information"""
+    service_type: Optional[str] = Field(None, description="Currently active service type")
+    service_loaded: bool = Field(..., description="Whether service is loaded and ready")
+    service_info: Optional[Dict[str, Any]] = Field(None, description="Detailed service information")
+    available_services: List[str] = Field(..., description="List of available service types")
+    message: str = Field(..., description="Status message")
+
+# ============================================================================
 # STATISTICS SCHEMAS
 # ============================================================================
 

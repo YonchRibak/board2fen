@@ -10,10 +10,11 @@ services:
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-chessuser} -d ${POSTGRES_DB:-chessdb}"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
+      test: ["CMD-SHELL", "pg_isready -U chessuser -d chessdb"]
+      interval: 5s
+      timeout: 10s
+      retries: 10
+      start_period: 30s  # Give it time to initialize
 
   api:
     build:
@@ -25,13 +26,12 @@ services:
     environment:
       ENVIRONMENT: development
       DATABASE_URL: postgresql+psycopg2://${POSTGRES_USER:-chessuser}:${POSTGRES_PASSWORD:-chesspass}@db:5432/${POSTGRES_DB:-chessdb}
-      # Fixed MODEL_PATH - added /app prefix
-      MODEL_PATH: https://storage.googleapis.com/chess_board_cllassification_model/final_light_quick_20250905.keras
     ports:
       - "8081:8000"
     volumes:
       - ./outputs:/app/outputs
-      - ./api/cnn_models:/app/api/cnn_models:ro   # Fixed: added ./api/ prefix
+      - ./api:/app/api
+    restart: unless-stopped  # Auto-restart if it fails
 
 volumes:
   pgdata:

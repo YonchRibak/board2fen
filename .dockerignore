@@ -12,9 +12,11 @@ venv/
 .gitignore
 .vscode/
 .idea/
-api/cnn_models/
 legacy/
 notebooks/
 outputs/
 utils/
 end2end_board_classifier_new_data/
+streamlit_ui/
+api/tests/
+api/BOARD2FEN API.postman_collection.json

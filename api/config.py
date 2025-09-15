@@ -1,4 +1,4 @@
-# api/config.py - Configuration settings
+# api/config.py - Updated configuration settings for modular chess prediction services
 
 import os
 from pathlib import Path
@@ -28,9 +28,10 @@ class Settings(BaseSettings):
 
     # API Settings
     app_name: str = "Chess Board to FEN API"
-    app_version: str = "1.0.0"
+    app_version: str = "2.0.0"  # Updated version for modular architecture
     app_description: str = (
-        "Convert chess board images to FEN notation using computer vision and deep learning"
+        "Convert chess board images to FEN notation using computer vision and deep learning. "
+        "Supports both end-to-end models and multi-model pipelines."
     )
 
     api_host: str = Field(default="0.0.0.0")
@@ -54,21 +55,49 @@ class Settings(BaseSettings):
     db_pool_size: int = Field(default=5)
     db_max_overflow: int = Field(default=10)
 
-    # Model - Updated to support URLs
-    # model_path: str = Field(
-    #     default="https://storage.googleapis.com/chess_board_cllassification_model/final_light_quick_20250903.keras")
-    model_path: str = Field(
-        default="https://storage.googleapis.com/chess_board_cllassification_model/final_light_quick_20250905.keras")
+    # === CHESS PREDICTION SERVICE CONFIGURATION ===
 
+    # Service Type Selection
+    chess_service_type: str = Field(
+        default="end_to_end",
+        description="Type of chess prediction service: 'end_to_end' or 'multi_model_pipeline'"
+    )
+
+    # End-to-End Model Configuration
+    end_to_end_model_path: str = Field(
+        default="https://storage.googleapis.com/chess_board_cllassification_model/final_light_quick_20250905.keras"
+    )
+
+    # Multi-Model Pipeline Configuration
+    segmentation_model_path: str = Field(
+        default="https://storage.googleapis.com/chess_board_cllassification_model/yolo_chess_board_segmentation_sept_2025.pt",
+        description="Path to YOLO segmentation model for board detection"
+    )
+    pieces_model_path: str = Field(
+        default="https://storage.googleapis.com/chess_board_cllassification_model/yolo_chess_piece_detector_sept_2025.pt",
+        description="Path to YOLO object detection model for piece detection"
+    )
+
+    # Model Input/Output Settings
     model_input_width: int = Field(default=256)
     model_input_height: int = Field(default=256)
+    piece_classes: tuple[str, ...] = Field(default=DEFAULT_PIECE_CLASSES)
+
+    # Service-Specific Confidence Thresholds
+    # End-to-End Model Thresholds
+    end_to_end_piece_confidence: float = Field(default=0.3, description="Confidence threshold for piece predictions")
+    end_to_end_empty_confidence: float = Field(default=0.5,
+                                               description="Confidence threshold for empty square predictions")
+
+    # Multi-Model Pipeline Thresholds
+    segmentation_confidence: float = Field(default=0.1, description="Confidence threshold for board segmentation")
+    piece_detection_confidence: float = Field(default=0.05, description="Confidence threshold for piece detection")
+    iou_threshold: float = Field(default=0.2, description="IoU threshold for non-maximum suppression")
 
     # Model caching settings
     model_cache_dir: str = Field(default="./model_cache")
     model_cache_enabled: bool = Field(default=True)
     model_download_timeout: int = Field(default=300)  # 5 minutes
-
-    piece_classes: tuple[str, ...] = Field(default=DEFAULT_PIECE_CLASSES)
 
     # Image Processing
     max_image_size_mb: float = Field(default=10.0)
@@ -106,22 +135,56 @@ class Settings(BaseSettings):
     def is_sqlite(self) -> bool:
         return "sqlite" in self.database_url.lower()
 
+    # === SERVICE CONFIGURATION METHODS ===
+
+    def get_service_config(self) -> dict:
+        """Get configuration for the selected chess prediction service"""
+        base_config = {
+            'piece_classes': self.piece_classes,
+            'model_input_size': self.model_input_size
+        }
+
+        if self.chess_service_type == "end_to_end":
+            return {
+                **base_config,
+                'model_path': self.end_to_end_model_path,
+                'piece_confidence_threshold': self.end_to_end_piece_confidence,
+                'empty_confidence_threshold': self.end_to_end_empty_confidence
+            }
+        elif self.chess_service_type == "multi_model_pipeline":
+            return {
+                **base_config,
+                'segmentation_model_path': self.segmentation_model_path,
+                'pieces_model_path': self.pieces_model_path,
+                'segmentation_confidence': self.segmentation_confidence,
+                'piece_confidence': self.piece_detection_confidence,
+                'iou_threshold': self.iou_threshold
+            }
+        else:
+            raise ValueError(f"Unknown service type: {self.chess_service_type}")
+
+    # === LEGACY PROPERTIES FOR BACKWARD COMPATIBILITY ===
+
+    @property
+    def model_path(self) -> str:
+        """Legacy property - returns end_to_end_model_path for backward compatibility"""
+        return self.end_to_end_model_path
+
     @property
     def absolute_model_path(self) -> Path:
-        """For backward compatibility - returns path for local files"""
+        """Legacy property for backward compatibility"""
         if self.is_model_url:
-            # Return cached model path
             return self.model_cache_path
 
-        model_path = Path(self.model_path)
+        model_path = Path(self.end_to_end_model_path)
         if model_path.is_absolute():
             return model_path
         return Path(__file__).parent.parent / model_path
 
     @property
     def is_model_url(self) -> bool:
-        """Check if model_path is a URL"""
-        return self.model_path.startswith(('http://', 'https://'))
+        """Check if end_to_end_model_path is a URL"""
+        return self.end_to_end_model_path.startswith(('http://', 'https://'))
 
     @property
     def model_cache_path(self) -> Path:
@@ -130,7 +193,7 @@ class Settings(BaseSettings):
         if self.is_model_url:
             # Generate filename from URL
             import hashlib
-            url_hash = hashlib.md5(self.model_path.encode()).hexdigest()[:8]
+            url_hash = hashlib.md5(self.end_to_end_model_path.encode()).hexdigest()[:8]
             model_filename = f"cached_model_{url_hash}.keras"
             return cache_dir / model_filename
         return cache_dir / "local_model.keras"

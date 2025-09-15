@@ -1,4 +1,4 @@
-# api/main.py - FastAPI Chess Board to FEN Service
+# api/main.py - Updated FastAPI Chess Board to FEN Service with Modular Architecture
 
 import os
 import time
@@ -11,7 +11,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
 from datetime import datetime
 import uvicorn
-
+import threading
 # Add the parent directory (project root) to Python path
 current_dir = Path(__file__).resolve().parent
 project_root = current_dir.parent if current_dir.name == "api" else current_dir
@@ -23,14 +23,15 @@ from api.config import settings
 # Import database components
 from api.database import get_db, check_database_connection, health_check as db_health_check, get_database_info
 
-# Import our chess pipeline components
+# Import our chess service components (NEW MODULAR ARCHITECTURE)
+from api.services.base import ServiceFactory, ChessPredictionService
 from api._helpers import (
     FENValidator,
-    ChessPipelineService,
     validate_uploaded_image,
-    resize_image_for_model
+    resize_image_for_model, ImageProcessor
 )
-# Import database cnn_models
+
+# Import database models
 from api.models import (
     ChessPrediction,
     get_database_statistics,
@@ -39,6 +40,7 @@ from api.models import (
     get_model_metrics,
     get_current_active_model
 )
+
 # Import Pydantic schemas
 from api.schemas import (
     PredictionResponse,
@@ -51,7 +53,9 @@ from api.schemas import (
     FENValidationResponse,
     RootResponse,
     RecentCorrectionsResponse,
-    RetrainingStatusResponse, ModelMetricsResponse, ModelMetrics
+    RetrainingStatusResponse,
+    ModelMetricsResponse,
+    ModelMetrics, ServiceSwitchResponse, ServiceSwitchRequest, CurrentServiceResponse
 )
 
 # Configure logging
@@ -82,30 +86,105 @@ app.add_middleware(
     allow_headers=settings.cors_allow_headers,
 )
 
-# Initialize chess pipeline service
-chess_pipeline = None
+# Initialize chess prediction service (NEW MODULAR APPROACH)
+chess_service: ChessPredictionService = None
+current_service_type: str = ""
+# Thread safety for service switching
+service_lock = threading.Lock()
 
+
+def initialize_chess_service(service_type: str = None) -> tuple[bool, str]:
+    """
+    Initialize or switch the chess prediction service
+
+    Args:
+        service_type: Service type to initialize. If None, uses config default.
+
+    Returns:
+        tuple: (success: bool, message: str)
+    """
+    global chess_service, current_service_type
+
+    try:
+        if service_type is None:
+            service_type = settings.chess_service_type
+
+        # Validate service type
+        available_services = ServiceFactory.get_available_services()
+        if service_type not in available_services:
+            return False, f"Invalid service type: {service_type}. Available: {available_services}"
+
+        # Get service configuration
+        if service_type == "end_to_end":
+            service_config = {
+                'model_path': settings.end_to_end_model_path,
+                'piece_classes': settings.piece_classes,
+                'model_input_size': settings.model_input_size,
+                'piece_confidence_threshold': settings.end_to_end_piece_confidence,
+                'empty_confidence_threshold': settings.end_to_end_empty_confidence
+            }
+        elif service_type == "multi_model_pipeline":
+            service_config = {
+                'segmentation_model_path': settings.segmentation_model_path,
+                'pieces_model_path': settings.pieces_model_path,
+                'piece_classes': [
+                    'white-king', 'white-queen', 'white-rook', 'white-bishop', 'white-knight', 'white-pawn',
+                    'black-king', 'black-queen', 'black-rook', 'black-bishop', 'black-knight', 'black-pawn'
+                ],
+                'segmentation_confidence': settings.segmentation_confidence,
+                'piece_confidence': settings.piece_detection_confidence,
+                'iou_threshold': settings.iou_threshold
+            }
+        else:
+            return False, f"Unknown service type: {service_type}"
+
+        # Create new service
+        new_service = ServiceFactory.create_service(service_type, service_config)
+
+        if new_service.is_ready():
+            # Replace old service
+            chess_service = new_service
+            current_service_type = service_type
+
+            logger.info(f"Chess prediction service initialized successfully")
+            logger.info(f"   Service type: {chess_service.service_type}")
+            logger.info(f"   Service loaded: {chess_service.service_loaded}")
+
+            return True, f"Successfully initialized {service_type} service"
+        else:
+            return False, f"Service {service_type} failed to initialize properly"
+
+    except Exception as e:
+        logger.error(f"Failed to initialize chess service: {e}")
+        return False, f"Failed to initialize service: {str(e)}"
 
 @app.on_event("startup")
 async def startup_event():
-    """Initialize the chess pipeline service on startup"""
-    global chess_pipeline
+    """Initialize the chess prediction service on startup"""
+    global chess_service
 
     try:
         # DEBUG: Print configuration info
-        logger.info(f"🔧 Model path from config: {settings.model_path}")
-        logger.info(f"🔧 Is model URL: {settings.is_model_url}")
-        logger.info(f"🔧 Model cache path: {settings.model_cache_path}")
-        logger.info(f"🔧 Cache enabled: {settings.model_cache_enabled}")
+        logger.info(f"🔧 Service type: {settings.chess_service_type}")
+        logger.info(f"🔧 Service config: {settings.get_service_config()}")
 
         # Check database connection
         if not check_database_connection():
             raise Exception("Database connection failed")
 
-        # Initialize chess pipeline with configured model path
-        # Use settings.model_path instead of settings.absolute_model_path for URL support
-        chess_pipeline = ChessPipelineService(model_path=settings.model_path)
-        logger.info(f"♟️ Chess pipeline service initialized with model: {settings.model_path}")
+        # Create the appropriate chess prediction service
+        service_config = settings.get_service_config()
+        chess_service = ServiceFactory.create_service(
+            service_type=settings.chess_service_type,
+            config=service_config
+        )
+
+        if chess_service.is_ready():
+            logger.info(f"♟️ Chess prediction service initialized successfully")
+            logger.info(f"   Service type: {chess_service.service_type}")
+            logger.info(f"   Service loaded: {chess_service.service_loaded}")
+        else:
+            raise Exception(f"Chess service failed to initialize: {chess_service.service_type}")
 
         # Log configuration info
         logger.info(f"🔧 Environment: {os.getenv('ENVIRONMENT', 'development')}")
@@ -139,7 +218,7 @@ def get_client_ip(request: Request) -> str:
 
 
 # ============================================================================
-# API ENDPOINTS
+# API ENDPOINTS (SAME INTERFACE, NEW MODULAR BACKEND)
 # ============================================================================
 
 @app.get("/", response_model=RootResponse)
@@ -157,15 +236,98 @@ async def root():
 @app.get("/health", response_model=HealthResponse)
 async def health_check(db: Session = Depends(get_db)):
     """Health check endpoint"""
-
     # Use database health check function
     db_health = db_health_check()
 
     return HealthResponse(
-        status="healthy" if (chess_pipeline and db_health["database_connected"]) else "unhealthy",
-        model_ready=chess_pipeline is not None,
+        status="healthy" if (
+                    chess_service and chess_service.is_ready() and db_health["database_connected"]) else "unhealthy",
+        model_ready=chess_service is not None and chess_service.is_ready(),
         database_ready=db_health["database_connected"],
         timestamp=datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S UTC")
+    )
+
+
+@app.post("/service/switch", response_model=ServiceSwitchResponse)
+async def switch_service(request: ServiceSwitchRequest):
+    """
+    Switch between different chess prediction services dynamically
+
+    Available service types:
+    - end_to_end: Single Keras model for direct FEN prediction
+    - multi_model_pipeline: YOLO segmentation + object detection pipeline
+    """
+    global chess_service, current_service_type
+
+    # Thread safety - only one service switch at a time
+    with service_lock:
+        try:
+            # Validate service type
+            available_services = ServiceFactory.get_available_services()
+            if request.service_type not in available_services:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Invalid service type: {request.service_type}. Available: {available_services}"
+                )
+
+            # Check if already using this service
+            if request.service_type == current_service_type:
+                return ServiceSwitchResponse(
+                    success=True,
+                    message=f"Already using {request.service_type} service",
+                    previous_service=current_service_type,
+                    new_service=request.service_type,
+                    timestamp=datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S UTC")
+                )
+
+            previous_service = current_service_type
+
+            # Initialize new service
+            success, message = initialize_chess_service(request.service_type)
+
+            if success:
+                logger.info(f"Service switched from {previous_service} to {current_service_type}")
+                return ServiceSwitchResponse(
+                    success=True,
+                    message=f"Successfully switched to {request.service_type} service",
+                    previous_service=previous_service,
+                    new_service=current_service_type,
+                    timestamp=datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S UTC")
+                )
+            else:
+                raise HTTPException(
+                    status_code=500,
+                    detail=f"Failed to switch service: {message}"
+                )
+
+        except HTTPException:
+            raise
+        except Exception as e:
+            logger.error(f"Service switch error: {e}")
+            raise HTTPException(
+                status_code=500,
+                detail=f"Internal error during service switch: {str(e)}"
+            )
+
+
+@app.get("/service/current", response_model=CurrentServiceResponse)
+async def get_current_service():
+    """Get information about the currently active service"""
+    if not chess_service:
+        return CurrentServiceResponse(
+            service_type=None,
+            service_loaded=False,
+            service_info=None,
+            available_services=ServiceFactory.get_available_services(),
+            message="No service currently loaded"
+        )
+
+    return CurrentServiceResponse(
+        service_type=current_service_type,
+        service_loaded=chess_service.is_ready(),
+        service_info=chess_service.get_service_info(),
+        available_services=ServiceFactory.get_available_services(),
+        message=f"Currently using {current_service_type} service"
     )
 
 
@@ -178,12 +340,13 @@ async def predict_chess_position(
 ):
     """
     Main prediction endpoint: Upload chess board image and get FEN notation
+    Uses modular service architecture supporting both end-to-end and multi-model pipelines
     """
 
-    if not chess_pipeline:
+    if not chess_service or not chess_service.is_ready():
         raise HTTPException(
             status_code=503,
-            detail="Chess pipeline service not available"
+            detail=f"Chess prediction service not available (type: {settings.chess_service_type})"
         )
 
     start_time = time.time()
@@ -203,10 +366,10 @@ async def predict_chess_position(
         # Resize image to model expectations and convert to bytes
         resized_image_bytes = resize_image_for_model(image_bytes)
 
-        logger.info(f"🔍 Processing image: {file.filename} from IP: {device_ip}")
+        logger.info(f"📸 Processing image: {file.filename} from IP: {device_ip} using {chess_service.service_type}")
 
-        # Process the image through our chess pipeline
-        prediction_result = chess_pipeline.predict_from_image(image_bytes)
+        # Process the image through our chess service (MODULAR APPROACH)
+        prediction_result = chess_service.predict_from_image(image_bytes)
 
         processing_time = int((time.time() - start_time) * 1000)
 
@@ -264,202 +427,112 @@ async def predict_chess_position(
         )
 
 
-@app.get("/debug/raw-prediction")
-async def debug_raw_prediction():
-    """Debug raw model predictions to understand what's happening"""
-    import numpy as np
+# ============================================================================
+# UPDATED DEBUG ENDPOINTS FOR MODULAR ARCHITECTURE
+# ============================================================================
 
-    if not chess_pipeline or not chess_pipeline.model_loaded:
-        return {"error": "Model not loaded"}
-
-    # Create a test input that should produce clear predictions
-    test_input = np.random.random((1, 256, 256, 3)).astype(np.float32)
-
-    # Get raw model output
-    raw_prediction = chess_pipeline.model.predict(test_input, verbose=0)
-
-    # Analyze the output
-    debug_info = {
-        "model_output_shape": raw_prediction.shape,
-        "output_range": [float(raw_prediction.min()), float(raw_prediction.max())],
-        "output_mean": float(raw_prediction.mean()),
-        "output_std": float(raw_prediction.std()),
-        "piece_classes": chess_pipeline.piece_classes,
-        "num_classes": len(chess_pipeline.piece_classes),
-        "squares_analysis": []
-    }
-
-    # Analyze first 8 squares in detail
-    for i in range(min(8, 64)):
-        square_probs = raw_prediction[0, i]  # Shape should be (13,)
-        predicted_class = int(np.argmax(square_probs))
-        max_confidence = float(square_probs[predicted_class])
-
-        # Get class name
-        class_name = chess_pipeline.piece_classes[predicted_class] if predicted_class < len(
-            chess_pipeline.piece_classes) else "unknown"
-
-        square_analysis = {
-            "square_index": i,
-            "square_position": f"{chr(ord('a') + (i % 8))}{8 - (i // 8)}",  # e.g., 'a8', 'b8', etc.
-            "predicted_class_index": predicted_class,
-            "predicted_class_name": class_name,
-            "confidence": max_confidence,
-            "all_probabilities": [float(p) for p in square_probs],
-            "piece_symbol": chess_pipeline._piece_name_to_symbol(class_name)
-        }
-
-        debug_info["squares_analysis"].append(square_analysis)
-
-    # Check if all predictions are too similar (indicating model problems)
-    all_predictions = raw_prediction[0]  # Shape (64, 13)
-    variance_across_squares = float(np.var(all_predictions))
-    debug_info["variance_across_squares"] = variance_across_squares
-    debug_info["predictions_too_uniform"] = variance_across_squares < 0.001
-
-    # Check confidence thresholds being used
-    debug_info["confidence_analysis"] = {
-        "squares_above_01_threshold": int(np.sum(np.max(all_predictions, axis=1) > 0.1)),
-        "squares_above_03_threshold": int(np.sum(np.max(all_predictions, axis=1) > 0.3)),
-        "squares_above_05_threshold": int(np.sum(np.max(all_predictions, axis=1) > 0.5)),
-        "max_confidence_found": float(np.max(all_predictions)),
-        "min_confidence_found": float(np.min(all_predictions))
-    }
-
-    return debug_info
-
-
-@app.get("/debug/class-mapping")
-async def debug_class_mapping():
-    """Debug the class mapping logic"""
-    if not chess_pipeline:
-        return {"error": "Pipeline not loaded"}
-
-    mapping_test = {}
-
-    for i, class_name in enumerate(chess_pipeline.piece_classes):
-        symbol = chess_pipeline._piece_name_to_symbol(class_name)
-        mapping_test[i] = {
-            "class_name": class_name,
-            "symbol": symbol,
-            "is_empty": symbol == "",
-            "is_piece": symbol != ""
-        }
+@app.get("/debug/service-info")
+async def debug_service_info():
+    """Debug endpoint to get information about the current service"""
+    if not chess_service:
+        return {"error": "No chess service initialized"}
 
     return {
-        "piece_classes": chess_pipeline.piece_classes,
-        "total_classes": len(chess_pipeline.piece_classes),
-        "mapping_test": mapping_test,
-        "empty_class_indices": [i for i, cls in enumerate(chess_pipeline.piece_classes) if
-                                chess_pipeline._piece_name_to_symbol(cls) == ""]
+        "service_info": chess_service.get_service_info(),
+        "available_services": ServiceFactory.get_available_services(),
+        "selected_service_type": settings.chess_service_type,
+        "service_config": settings.get_service_config()
     }
+
+
+@app.get("/debug/raw-prediction")
+async def debug_raw_prediction():
+    """Debug raw model predictions (only works for end-to-end service)"""
+    import numpy as np
+
+    if not chess_service or not chess_service.is_ready():
+        return {"error": "Service not loaded"}
+
+    if chess_service.service_type != "EndToEndPipelineService":
+        return {
+            "error": f"Raw prediction debug only available for end-to-end service, current: {chess_service.service_type}"}
+
+    try:
+        # Create a test input that should produce clear predictions
+        test_input = np.random.random((1, 256, 256, 3)).astype(np.float32)
+
+        # Get raw model output (access the model directly for end-to-end service)
+        raw_prediction = chess_service.model.predict(test_input, verbose=0)
+
+        # Analyze the output
+        debug_info = {
+            "model_output_shape": raw_prediction.shape,
+            "output_range": [float(raw_prediction.min()), float(raw_prediction.max())],
+            "output_mean": float(raw_prediction.mean()),
+            "output_std": float(raw_prediction.std()),
+            "piece_classes": chess_service.piece_classes,
+            "num_classes": len(chess_service.piece_classes),
+            "squares_analysis": []
+        }
+
+        # Analyze first 8 squares in detail
+        for i in range(min(8, 64)):
+            square_probs = raw_prediction[0, i]  # Shape should be (13,)
+            predicted_class = int(np.argmax(square_probs))
+            max_confidence = float(square_probs[predicted_class])
+
+            # Get class name
+            class_name = chess_service.piece_classes[predicted_class] if predicted_class < len(
+                chess_service.piece_classes) else "unknown"
+
+            square_analysis = {
+                "square_index": i,
+                "square_position": f"{chr(ord('a') + (i % 8))}{8 - (i // 8)}",  # e.g., 'a8', 'b8', etc.
+                "predicted_class_index": predicted_class,
+                "predicted_class_name": class_name,
+                "confidence": max_confidence,
+                "all_probabilities": [float(p) for p in square_probs],
+                "piece_symbol": chess_service._piece_name_to_symbol(class_name) if hasattr(chess_service,
+                                                                                           '_piece_name_to_symbol') else "N/A"
+            }
+
+            debug_info["squares_analysis"].append(square_analysis)
+
+        return debug_info
+
+    except Exception as e:
+        import traceback
+        return {
+            "error": str(e),
+            "traceback": traceback.format_exc()
+        }
+
 
 @app.post("/debug/predict-detailed")
 async def debug_predict_detailed(file: UploadFile = File(...)):
     """Upload an image and get detailed prediction analysis"""
 
-    if not chess_pipeline or not chess_pipeline.model_loaded:
-        return {"error": "Model not loaded"}
+    if not chess_service or not chess_service.is_ready():
+        return {"error": "Service not loaded"}
 
     try:
-        import numpy as np
         image_bytes = await file.read()
 
-        # Load and preprocess image
-        from api._helpers import ImageProcessor
-        image = ImageProcessor.load_image_from_bytes(image_bytes)
-        if image is None:
-            return {"error": "Failed to load image"}
+        # Get basic prediction first
+        prediction_result = chess_service.predict_from_image(image_bytes)
 
-        # Show preprocessing steps
         debug_info = {
-            "original_image_shape": image.shape,
-            "original_image_range": [int(image.min()), int(image.max())],
-            "original_image_dtype": str(image.dtype)
-        }
-
-        # Preprocess
-        processed_image = ImageProcessor.preprocess_for_model(image, target_size=(256, 256))
-        debug_info.update({
-            "processed_image_shape": processed_image.shape,
-            "processed_image_range": [float(processed_image.min()), float(processed_image.max())],
-            "processed_image_dtype": str(processed_image.dtype),
-            "processed_image_mean": float(processed_image.mean()),
-            "processed_image_std": float(processed_image.std())
-        })
-
-        # Get raw model prediction
-        batch_input = np.expand_dims(processed_image, axis=0)
-        raw_prediction = chess_pipeline.model.predict(batch_input, verbose=0)
-
-        debug_info.update({
-            "raw_prediction_shape": raw_prediction.shape,
-            "raw_prediction_range": [float(raw_prediction.min()), float(raw_prediction.max())],
-            "raw_prediction_mean": float(raw_prediction.mean()),
-            "raw_prediction_std": float(raw_prediction.std())
-        })
-
-        # Analyze each square's prediction
-        squares_detail = []
-        prediction_2d = raw_prediction[0]  # Remove batch dimension
-
-        for i in range(64):
-            square_probs = prediction_2d[i]
-            predicted_class_idx = int(np.argmax(square_probs))
-            max_confidence = float(square_probs[predicted_class_idx])
-
-            rank = i // 8
-            file_idx = i % 8
-            square_name = f"{chr(ord('a') + file_idx)}{8 - rank}"
-
-            class_name = chess_pipeline.piece_classes[predicted_class_idx] if predicted_class_idx < len(
-                chess_pipeline.piece_classes) else "unknown"
-            piece_symbol = chess_pipeline._piece_name_to_symbol(class_name)
-
-            # Check if this square would be placed based on current thresholds
-            would_place_piece = False
-            if piece_symbol != '':  # It's a piece
-                would_place_piece = max_confidence > 0.1  # Current threshold for pieces
-            else:  # It's empty
-                would_place_piece = max_confidence > 0.1  # Current threshold for empty
-
-            squares_detail.append({
-                "square": square_name,
-                "board_position": [rank, file_idx],
-                "predicted_class": class_name,
-                "piece_symbol": piece_symbol,
-                "confidence": max_confidence,
-                "would_place": would_place_piece,
-                "top_3_predictions": [
-                    {
-                        "class": chess_pipeline.piece_classes[idx] if idx < len(
-                            chess_pipeline.piece_classes) else "unknown",
-                        "confidence": float(square_probs[idx])
-                    }
-                    for idx in np.argsort(square_probs)[-3:][::-1]  # Top 3
-                ]
-            })
-
-        debug_info["squares_detail"] = squares_detail
-
-        # Summary statistics
-        all_confidences = [s["confidence"] for s in squares_detail]
-        debug_info["confidence_summary"] = {
-            "max_confidence": max(all_confidences),
-            "min_confidence": min(all_confidences),
-            "mean_confidence": sum(all_confidences) / len(all_confidences),
-            "squares_above_01": len([c for c in all_confidences if c > 0.1]),
-            "squares_above_03": len([c for c in all_confidences if c > 0.3]),
-            "squares_above_05": len([c for c in all_confidences if c > 0.5])
-        }
-
-        # Run through the actual pipeline for comparison
-        pipeline_result = chess_pipeline.predict_from_image(image_bytes)
-        debug_info["pipeline_result"] = {
-            "success": pipeline_result.success,
-            "fen": pipeline_result.fen,
-            "confidence": pipeline_result.confidence,
-            "board_matrix": pipeline_result.board_matrix
+            "service_type": chess_service.service_type,
+            "service_config": chess_service.config,
+            "prediction_result": {
+                "success": prediction_result.success,
+                "fen": prediction_result.fen,
+                "confidence": prediction_result.confidence,
+                "board_detected": prediction_result.board_detected,
+                "board_matrix": prediction_result.board_matrix,
+                "error_message": prediction_result.error_message,
+                "processing_steps": prediction_result.processing_steps
+            }
         }
 
         return debug_info
@@ -471,14 +544,125 @@ async def debug_predict_detailed(file: UploadFile = File(...)):
             "traceback": traceback.format_exc()
         }
 
+
+@app.post("/debug/multi-model-detailed")
+async def debug_multi_model_detailed(file: UploadFile = File(...)):
+    """Debug endpoint specifically for multi-model pipeline issues"""
+
+    if not chess_service or chess_service.service_type != "MultiModelPipelineService":
+        return {"error": "Multi-model service not active"}
+
+    try:
+        image_bytes = await file.read()
+        image = ImageProcessor.load_image_from_bytes(image_bytes)
+
+        if image is None:
+            return {"error": "Failed to load image"}
+
+        debug_info = {
+            "image_shape": image.shape,
+            "service_config": chess_service.config
+        }
+
+        # Step 1: Board detection
+        corners, seg_confidence, mask = chess_service._detect_board_with_segmentation(image)
+        debug_info["board_detection"] = {
+            "corners_found": corners is not None,
+            "segmentation_confidence": seg_confidence,
+            "corners": corners
+        }
+
+        if not corners:
+            return {"error": "Board not detected", "debug_info": debug_info}
+
+        # Step 2: Piece detection (CRITICAL STEP)
+        original_pieces = chess_service._detect_pieces(image)
+        debug_info["piece_detection"] = {
+            "pieces_found": len(original_pieces),
+            "pieces_details": original_pieces[:10]  # First 10 pieces for debugging
+        }
+
+        # Step 3: Board warping
+        warped_board, transform_matrix, final_corners = chess_service._warp_board_from_mask(
+            image, mask, corners
+        )
+
+        debug_info["board_warping"] = {
+            "warp_successful": warped_board is not None,
+            "warped_shape": warped_board.shape if warped_board is not None else None,
+            "transform_matrix_exists": transform_matrix is not None
+        }
+
+        if warped_board is None:
+            return {"error": "Board warping failed", "debug_info": debug_info}
+
+        # Step 4: Transform pieces to warped space
+        warped_pieces = chess_service._transform_pieces_to_warped_space(
+            original_pieces, transform_matrix, warped_board.shape[:2]
+        )
+
+        debug_info["coordinate_transformation"] = {
+            "original_pieces": len(original_pieces),
+            "warped_pieces": len(warped_pieces),
+            "warped_pieces_details": warped_pieces[:10]
+        }
+
+        # Step 5: Assign pieces to squares
+        board_matrix = chess_service._assign_pieces_to_squares(warped_pieces)
+
+        pieces_on_board = sum(1 for row in board_matrix for cell in row if cell != '')
+        debug_info["piece_assignment"] = {
+            "pieces_assigned": pieces_on_board,
+            "board_matrix": board_matrix
+        }
+
+        # Test with lower thresholds
+        debug_info["threshold_analysis"] = {}
+
+        # Try with very low confidence threshold
+        low_confidence_pieces = []
+        try:
+            results = chess_service.pieces_model(image, conf=0.1, iou=0.3)  # Much lower thresholds
+            for result in results:
+                boxes = result.boxes
+                if boxes is not None:
+                    for box in boxes:
+                        piece_info = {
+                            'x_center': float(box.xywh[0][0]),
+                            'y_center': float(box.xywh[0][1]),
+                            'confidence': float(box.conf[0]),
+                            'category_id': int(box.cls[0])
+                        }
+                        if hasattr(result, 'names') and piece_info['category_id'] in result.names:
+                            piece_info['class_name'] = result.names[piece_info['category_id']]
+                        low_confidence_pieces.append(piece_info)
+
+            debug_info["threshold_analysis"]["low_threshold_pieces"] = {
+                "count": len(low_confidence_pieces),
+                "pieces": low_confidence_pieces[:15]  # First 15
+            }
+        except Exception as e:
+            debug_info["threshold_analysis"]["error"] = str(e)
+
+        return debug_info
+
+    except Exception as e:
+        import traceback
+        return {
+            "error": str(e),
+            "traceback": traceback.format_exc()
+        }
+
+# ============================================================================
+# REMAINING ENDPOINTS (UNCHANGED)
+# ============================================================================
+
 @app.post("/predict/correct", response_model=CorrectionResponse)
 async def submit_correction(
         correction: CorrectionRequest,
         db: Session = Depends(get_db)
 ):
-    """
-    Submit a correction for a previous prediction
-    """
+    """Submit a correction for a previous prediction"""
     try:
         # Validate the corrected FEN
         if not FENValidator.validate_fen(correction.corrected_fen):
@@ -527,7 +711,6 @@ async def submit_correction(
 @app.get("/predict/{prediction_id}")
 async def get_prediction(prediction_id: int, db: Session = Depends(get_db)):
     """Get details of a specific prediction"""
-
     db_prediction = db.query(ChessPrediction).filter(
         ChessPrediction.id == prediction_id
     ).first()
@@ -541,7 +724,6 @@ async def get_prediction(prediction_id: int, db: Session = Depends(get_db)):
 @app.get("/stats", response_model=StatsResponse)
 async def get_api_stats(db: Session = Depends(get_db)):
     """Get API usage statistics"""
-
     try:
         stats = get_database_statistics(db)
 
@@ -562,7 +744,6 @@ async def get_api_stats(db: Session = Depends(get_db)):
 @app.get("/corrections/recent", response_model=RecentCorrectionsResponse)
 async def get_recent_corrections(limit: int = 10, db: Session = Depends(get_db)):
     """Get recent corrections for monitoring purposes"""
-
     try:
         recent_corrections = get_corrected_predictions(db, limit=limit)
 
@@ -573,7 +754,6 @@ async def get_recent_corrections(limit: int = 10, db: Session = Depends(get_db))
                 "corrected_fen": pred.corrected_fen,
                 "confidence_score": pred.confidence_score,
                 "device_identifier": pred.device_identifier[:8] + "..." if pred.device_identifier else None,
-                # Partial IP for privacy
                 "created_at": pred.created_at.isoformat() if pred.created_at else None,
                 "corrected_at": pred.corrected_at.isoformat() if pred.corrected_at else None,
             }
@@ -593,7 +773,6 @@ async def get_recent_corrections(limit: int = 10, db: Session = Depends(get_db))
 @app.get("/corrections/count", response_model=RetrainingStatusResponse)
 async def get_corrections_count(db: Session = Depends(get_db)):
     """Get count of corrections for model retraining threshold"""
-
     try:
         retrain_info = check_retraining_threshold(db, threshold=settings.retrain_correction_threshold)
         return RetrainingStatusResponse(**retrain_info)
@@ -606,14 +785,13 @@ async def get_corrections_count(db: Session = Depends(get_db)):
 @app.get("/model/status", response_model=ModelStatusResponse)
 async def get_model_status(db: Session = Depends(get_db)):
     """Get current model status and statistics"""
-
     try:
         # Get database statistics for accuracy estimation
         stats = get_database_statistics(db)
 
         return ModelStatusResponse(
-            model_version=settings.app_version,  # TODO: Get from actual model metadata
-            model_loaded=chess_pipeline is not None,
+            model_version=settings.app_version + f"-{settings.chess_service_type}",
+            model_loaded=chess_service is not None and chess_service.is_ready(),
             total_predictions=stats["total_predictions"],
             accuracy_estimate=stats["prediction_success_rate"] if stats["total_predictions"] > 0 else None,
             last_retrain=None  # TODO: Get from ModelVersion table
@@ -627,10 +805,8 @@ async def get_model_status(db: Session = Depends(get_db)):
 @app.get("/model/metrics", response_model=ModelMetricsResponse)
 async def get_model_metrics(db: Session = Depends(get_db)):
     """Get comprehensive metrics for all model versions/generations"""
-
     try:
-        from models import ModelVersion, ChessPrediction
-        from datetime import datetime
+        from api.models import ModelVersion, ChessPrediction
 
         # Get all model versions
         model_versions = db.query(ModelVersion).order_by(ModelVersion.created_at.asc()).all()
@@ -690,187 +866,9 @@ async def get_model_metrics(db: Session = Depends(get_db)):
         raise HTTPException(status_code=500, detail=f"Failed to retrieve model metrics: {str(e)}")
 
 
-# Replace the debug endpoint in main.py with this corrected version
-
-@app.get("/debug/model")
-async def debug_model_loading():
-    """Debug endpoint to check model loading status"""
-
-    # Import everything we need in this function
-    from pathlib import Path
-    import os
-
-    debug_info = {
-        "pipeline_exists": chess_pipeline is not None,
-        "model_loaded": chess_pipeline.model_loaded if chess_pipeline else False,
-        "model_path": str(settings.absolute_model_path),
-        "model_exists": settings.absolute_model_path.exists(),
-        "model_size_mb": None,
-        "errors": [],
-        "tensorflow_version": None,
-        "current_directory": str(Path.cwd()),
-        "files_in_model_dir": [],
-        "settings_model_path": settings.model_path,
-        "python_path": os.environ.get("PYTHONPATH", "Not set")
-    }
-
-    # Check TensorFlow
-    try:
-        import tensorflow as tf
-        debug_info["tensorflow_version"] = tf.__version__
-    except Exception as e:
-        debug_info["errors"].append(f"TensorFlow import error: {e}")
-
-    # Check model file
-    model_path = settings.absolute_model_path
-    debug_info["model_path_absolute"] = str(model_path.absolute())
-
-    if model_path.exists():
-        debug_info["model_size_mb"] = round(model_path.stat().st_size / (1024 * 1024), 2)
-    else:
-        debug_info["errors"].append(f"Model file not found: {model_path}")
-
-        # List files in the directory
-        parent_dir = model_path.parent
-        if parent_dir.exists():
-            debug_info["files_in_model_dir"] = [f.name for f in parent_dir.glob("*")]
-            debug_info["parent_dir_exists"] = True
-        else:
-            debug_info["errors"].append(f"Model directory doesn't exist: {parent_dir}")
-            debug_info["parent_dir_exists"] = False
-
-            # Try to find any .keras files
-            debug_info["keras_files_found"] = []
-            try:
-                for keras_file in Path("/app").rglob("*.keras"):
-                    debug_info["keras_files_found"].append(str(keras_file))
-            except:
-                pass
-
-    # Try to manually load the model
-    try:
-        if model_path.exists():
-            import tensorflow as tf
-            test_model = tf.keras.models.load_model(str(model_path))
-            debug_info["manual_load_success"] = True
-            debug_info["model_input_shape"] = str(test_model.input_shape)
-            debug_info["model_output_shape"] = str(test_model.output_shape)
-        else:
-            debug_info["manual_load_success"] = False
-            debug_info["errors"].append("Cannot test manual load - file doesn't exist")
-    except Exception as e:
-        debug_info["manual_load_success"] = False
-        debug_info["errors"].append(f"Manual model loading failed: {e}")
-
-    # Test pipeline initialization
-    try:
-        from _helpers import ChessPipelineService
-        test_pipeline = ChessPipelineService(str(model_path))
-        debug_info["test_pipeline_success"] = test_pipeline.model_loaded
-        if not test_pipeline.model_loaded:
-            debug_info["errors"].append("Test pipeline failed to load model")
-    except Exception as e:
-        debug_info["test_pipeline_success"] = False
-        debug_info["errors"].append(f"Test pipeline error: {e}")
-        import traceback
-        debug_info["test_pipeline_traceback"] = traceback.format_exc()
-
-    # Check if the global chess_pipeline has any detailed error info
-    if chess_pipeline and hasattr(chess_pipeline, 'model_path'):
-        debug_info["global_pipeline_model_path"] = str(chess_pipeline.model_path)
-        debug_info["global_pipeline_model_exists"] = chess_pipeline.model_path.exists()
-
-    return debug_info
-
-
-@app.get("/debug/download")
-async def debug_download():
-    """Debug the model download process"""
-    import requests
-    from pathlib import Path
-
-    url = "https://storage.googleapis.com/chess_board_cllassification_model/final_light_quick_20250903.keras"
-    cache_path = settings.model_cache_path
-
-    debug_info = {
-        "url": url,
-        "cache_path": str(cache_path),
-        "cache_dir_exists": cache_path.parent.exists(),
-        "cache_file_exists": cache_path.exists(),
-        "url_accessible": False,
-        "url_status": None,
-        "url_size": None,
-        "download_test": None
-    }
-
-    # Test URL accessibility
-    try:
-        response = requests.head(url, timeout=10)
-        debug_info["url_accessible"] = response.status_code == 200
-        debug_info["url_status"] = response.status_code
-        debug_info["url_size"] = response.headers.get('content-length', 'unknown')
-    except Exception as e:
-        debug_info["url_error"] = str(e)
-
-    # Test download (first 1MB only)
-    try:
-        response = requests.get(url, timeout=30, stream=True, headers={'Range': 'bytes=0-1048576'})
-        if response.status_code in [200, 206]:
-            debug_info["download_test"] = "Success - first 1MB downloaded"
-        else:
-            debug_info["download_test"] = f"Failed - status {response.status_code}"
-    except Exception as e:
-        debug_info["download_test"] = f"Error: {str(e)}"
-
-    return debug_info
-
-@app.get("/debug/classes")
-async def debug_class_order():
-    """Debug endpoint to check class order"""
-    return {
-        "inference_classes": settings.piece_classes,
-        "inference_class_count": len(settings.piece_classes),
-        "model_output_shape": chess_pipeline.model.output_shape if chess_pipeline and chess_pipeline.model else None,
-        "expected_classes": 13  # From your model output shape (64, 13)
-    }
-
-
-@app.get("/debug/model-test")
-async def test_model_predictions():
-    """Test model with known input"""
-    if not chess_pipeline:
-        return {"error": "Pipeline not loaded"}
-
-    # Create a test input (all zeros, all ones, random)
-    import numpy as np
-
-    test_inputs = {
-        "zeros": np.zeros((1, 256, 256, 3), dtype=np.float32),
-        "ones": np.ones((1, 256, 256, 3), dtype=np.float32),
-        "half": np.full((1, 256, 256, 3), 0.5, dtype=np.float32),
-        "random": np.random.random((1, 256, 256, 3)).astype(np.float32)
-    }
-
-    results = {}
-    for name, test_input in test_inputs.items():
-        try:
-            prediction = chess_pipeline.model.predict(test_input, verbose=0)
-            results[name] = {
-                "shape": prediction.shape,
-                "min": float(prediction.min()),
-                "max": float(prediction.max()),
-                "mean": float(prediction.mean()),
-                "std": float(prediction.std())
-            }
-        except Exception as e:
-            results[name] = {"error": str(e)}
-
-    return results
-
 @app.get("/config/info", response_model=ConfigInfoResponse)
 async def get_config_info():
     """Get current configuration information (non-sensitive)"""
-
     return ConfigInfoResponse(
         environment=os.getenv("ENVIRONMENT", "development"),
         app_version=settings.app_version,
@@ -889,7 +887,6 @@ async def get_config_info():
 @app.get("/database/info")
 async def get_database_info_endpoint():
     """Get database connection information"""
-
     try:
         db_info = get_database_info()
         db_health = db_health_check()
@@ -908,7 +905,6 @@ async def get_database_info_endpoint():
 @app.get("/validate/fen", response_model=FENValidationResponse)
 async def validate_fen_notation(fen: str):
     """Validate FEN notation and convert to board matrix"""
-
     try:
         is_valid = FENValidator.validate_fen(fen)
 
