@@ -1,4 +1,4 @@
-// src/index.ts — vanilla Streamlit component (no React)
+// src/index.ts – vanilla Streamlit component (no React)
 import { Streamlit } from "streamlit-component-lib";
 
 // If you load chessboard.js via a <script> tag, declare the global here:
@@ -43,16 +43,16 @@ function updateFen(fen: string) {
   const out = document.getElementById("fen-display");
   if (out) out.textContent = fen;
   currentFen = fen;
-  const args = e.detail?.args ?? {};
-  const fen = args["initial_board_fen"] || "start";
-  if (fen !== currentFen) createBoard(fen);
-  else Streamlit.setFrameHeight();
-}
   Streamlit.setFrameHeight(); // resize if needed
 }
 
 // Handle rerenders from Python
 function onRender(e: any) {
+  const args = e.detail?.args ?? {};
+  const fen = args["initial_board_fen"] || "start";
+  if (fen !== currentFen) createBoard(fen);
+  else Streamlit.setFrameHeight();
+}
 
 window.addEventListener("DOMContentLoaded", () => {
   // 🔴 Tell Streamlit the iframe is alive

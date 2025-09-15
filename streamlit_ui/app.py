@@ -10,8 +10,8 @@ import streamlit.components.v1 as components
 project_root = Path(__file__).resolve().parent
 sys.path.append(str(project_root))
 
-from api_service import predict_fen, submit_correction  # noqa: E402
-from state_manager import initialize_session_state        # noqa: E402
+from api_service import predict_fen, submit_correction, switch_service  # noqa: E402
+from state_manager import initialize_session_state  # noqa: E402
 from my_component import st_chessboard_fen
 
 # -----------------------------
@@ -163,6 +163,7 @@ _CHESSBOARD_HTML = """
 </html>
 """
 
+
 # -----------------------------
 # Helpers
 # -----------------------------
@@ -188,6 +189,33 @@ def main():
     st.title("♟️ Board2FEN — Streamlit Editor")
 
     with st.sidebar:
+        st.subheader("Service Type")
+        service_options = ["End-to-End Model", "YOLO Pipeline"]
+        current_service = st.radio(
+            "Select service type:",
+            service_options,
+            index=0,
+            key="service_toggle"
+        )
+
+        # Handle service switching
+        if "previous_service" not in st.session_state:
+            st.session_state.previous_service = service_options[0]
+
+        if current_service != st.session_state.previous_service:
+            service_type = "end_to_end" if current_service == "End-to-End Model" else "multi_model_pipeline"
+            with st.spinner(f"Switching to {current_service}..."):
+                response = switch_service(service_type)
+            if response:
+                st.success(f"✅ Switched to {current_service}")
+                st.session_state.previous_service = current_service
+            else:
+                st.error("❌ Failed to switch service")
+                # Reset the toggle to previous state
+                st.session_state.service_toggle = st.session_state.previous_service
+
+        st.markdown("---")
+
         st.subheader("Upload & Predict")
         uploaded_file = st.file_uploader("Upload a board image", type=["png", "jpg", "jpeg"])
         analyze_btn = st.button("Analyze Image", use_container_width=True)
@@ -234,7 +262,8 @@ def main():
     colA, colB = st.columns(2)
     with colA:
         st.write("**Turn:**")
-        fen_turn = st.radio("Turn", ["w", "b"], index=0 if fen_turn == "w" else 1, horizontal=True, label_visibility="collapsed")
+        fen_turn = st.radio("Turn", ["w", "b"], index=0 if fen_turn == "w" else 1, horizontal=True,
+                            label_visibility="collapsed")
 
         st.write("**En Passant:**")
         fen_enp = st.text_input("En Passant", value=fen_enp, max_chars=2, label_visibility="collapsed")
@@ -251,14 +280,17 @@ def main():
         with c4:
             bQ = st.checkbox("q", value="q" in fen_castling)
 
-        castling_new = "".join([x for x in [("K" if wK else ""), ("Q" if wQ else ""), ("k" if bK else ""), ("q" if bQ else "")] if x])
+        castling_new = "".join(
+            [x for x in [("K" if wK else ""), ("Q" if wQ else ""), ("k" if bK else ""), ("q" if bQ else "")] if x])
         fen_castling = castling_new if castling_new else "-"
 
     colN, colM = st.columns(2)
     with colN:
-        fen_half = st.number_input("Halfmove Clock", min_value=0, value=int(fen_half) if fen_half.isdigit() else 0, step=1)
+        fen_half = st.number_input("Halfmove Clock", min_value=0, value=int(fen_half) if fen_half.isdigit() else 0,
+                                   step=1)
     with colM:
-        fen_full = st.number_input("Fullmove Number", min_value=1, value=int(fen_full) if fen_full.isdigit() else 1, step=1)
+        fen_full = st.number_input("Fullmove Number", min_value=1, value=int(fen_full) if fen_full.isdigit() else 1,
+                                   step=1)
 
     st.session_state.current_fen = f"{fen_board} {fen_turn} {fen_castling} {fen_enp} {fen_half} {fen_full}"
 

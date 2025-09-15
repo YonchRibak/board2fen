@@ -3,7 +3,7 @@
 import streamlit as st
 import requests
 import json
-from streamlit_config import PREDICT_ENDPOINT, CORRECTION_ENDPOINT
+from streamlit_config import PREDICT_ENDPOINT, CORRECTION_ENDPOINT, API_BASE_URL
 
 def predict_fen(image_file):
     """Sends an image to the API for FEN prediction."""
@@ -29,4 +29,20 @@ def submit_correction(prediction_id, corrected_fen):
         return response.json()
     except requests.exceptions.RequestException as e:
         st.error(f"An error occurred while submitting correction: {e}")
+        return None
+
+def switch_service(service_type):
+    """Switches between end-to-end model and YOLO-pipeline."""
+    try:
+        switch_payload = {
+            "service_type": service_type
+        }
+        headers = {
+            "Content-Type": "application/json"
+        }
+        response = requests.post(f"{API_BASE_URL}/service/switch", json=switch_payload, headers=headers)
+        response.raise_for_status()
+        return response.json()
+    except requests.exceptions.RequestException as e:
+        st.error(f"An error occurred while switching service: {e}")
         return None

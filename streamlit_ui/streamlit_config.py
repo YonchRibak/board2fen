@@ -3,4 +3,4 @@
 API_BASE_URL = "http://localhost:8081"
 
 PREDICT_ENDPOINT = f"{API_BASE_URL}/predict"
-CORRECTION_ENDPOINT = f"{API_BASE_URL}/correction"
+CORRECTION_ENDPOINT = f"{API_BASE_URL}/predict/correct"
