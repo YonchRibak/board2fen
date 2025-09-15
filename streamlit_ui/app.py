@@ -1,8 +1,9 @@
 # streamlit_ui/app.py
 
 import sys
+import urllib
 from pathlib import Path
-
+import time
 import streamlit as st
 import streamlit.components.v1 as components
 
@@ -313,19 +314,29 @@ def main():
                 st.warning("No predicted FEN available yet.")
 
     with col3:
-        submit_disabled = not bool(st.session_state.prediction_id)
-        if st.button("Submit Correction", use_container_width=True, disabled=submit_disabled):
-            if st.session_state.prediction_id:
-                with st.spinner("Submitting correction..."):
-                    resp = submit_correction(st.session_state.prediction_id, st.session_state.current_fen)
-                if resp and resp.get("success"):
-                    st.session_state.submit_success = True
-                    st.success("✅ Correction submitted. Thank you!")
-                    st.balloons()
+        if st.session_state.submit_success:
+            # Show Lichess Analysis button after successful submission
+            encoded_fen = urllib.parse.quote(st.session_state.current_fen)
+            lichess_url = f"https://lichess.org/analysis/{encoded_fen}"
+            if st.link_button("Lichess Analysis", lichess_url, use_container_width=True):
+                pass  # The link_button handles opening in new tab automatically
+        else:
+            # Show Submit Correction button
+            submit_disabled = not bool(st.session_state.prediction_id)
+            if st.button("Submit Correction", use_container_width=True, disabled=submit_disabled):
+                if st.session_state.prediction_id:
+                    with st.spinner("Submitting correction..."):
+                        resp = submit_correction(st.session_state.prediction_id, st.session_state.current_fen)
+                    if resp and resp.get("success"):
+                        st.session_state.submit_success = True
+                        st.success("✅ Correction submitted. Thank you!")
+                        st.balloons()
+                        time.sleep(3)  # Wait 3 seconds to show success message and balloons
+                        st.rerun()  # Then refresh the UI to show Lichess button
+                    else:
+                        st.error("❌ Failed to submit correction. Please try again.")
                 else:
-                    st.error("❌ Failed to submit correction. Please try again.")
-            else:
-                st.error("⚠️ No prediction ID found. Upload an image first.")
+                    st.error("⚠️ No prediction ID found. Upload an image first.")
 
     # Helper info if nothing yet
     if not st.session_state.predicted_fen:
