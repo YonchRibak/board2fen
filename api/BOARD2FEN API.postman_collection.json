@@ -68,6 +68,92 @@
 			"response": []
 		},
 		{
+			"name": "Service Switch",
+			"request": {
+				"method": "POST",
+				"header": [],
+				"body": {
+					"mode": "formdata",
+					"formdata": [
+						{
+							"key": "file",
+							"type": "file",
+							"src": "/C:/Users/User/Pictures/test_image.jpg"
+						}
+					]
+				},
+				"url": {
+					"raw": "{{baseURL}}/service/switch",
+					"host": [
+						"{{baseURL}}"
+					],
+					"path": [
+						"service",
+						"switch"
+					]
+				}
+			},
+			"response": []
+		},
+		{
+			"name": "Current Service",
+			"protocolProfileBehavior": {
+				"disableBodyPruning": true
+			},
+			"request": {
+				"method": "GET",
+				"header": [],
+				"body": {
+					"mode": "formdata",
+					"formdata": [
+						{
+							"key": "file",
+							"type": "file",
+							"src": "/C:/Users/User/Pictures/test_image.jpg"
+						}
+					]
+				},
+				"url": {
+					"raw": "{{baseURL}}/service/current",
+					"host": [
+						"{{baseURL}}"
+					],
+					"path": [
+						"service",
+						"current"
+					]
+				}
+			},
+			"response": []
+		},
+		{
+			"name": "Predict Detailed",
+			"request": {
+				"method": "POST",
+				"header": [],
+				"body": {
+					"mode": "formdata",
+					"formdata": [
+						{
+							"key": "file",
+							"type": "file",
+							"src": "/C:/Users/User/Pictures/test_image.jpg"
+						}
+					]
+				},
+				"url": {
+					"raw": "{{baseURL}}/predict",
+					"host": [
+						"{{baseURL}}"
+					],
+					"path": [
+						"predict"
+					]
+				}
+			},
+			"response": []
+		},
+		{
 			"name": "Correction",
 			"request": {
 				"method": "POST",
@@ -144,6 +230,114 @@
 		},
 		{
 			"name": "Model Status",
+			"request": {
+				"method": "GET",
+				"header": [],
+				"url": {
+					"raw": "{{baseURL}}/model/status",
+					"host": [
+						"{{baseURL}}"
+					],
+					"path": [
+						"model",
+						"status"
+					]
+				}
+			},
+			"response": []
+		},
+		{
+			"name": "Debug Model",
+			"request": {
+				"method": "GET",
+				"header": [],
+				"url": {
+					"raw": "{{baseURL}}/model/status",
+					"host": [
+						"{{baseURL}}"
+					],
+					"path": [
+						"model",
+						"status"
+					]
+				}
+			},
+			"response": []
+		},
+		{
+			"name": "Debug Raw Prediction",
+			"request": {
+				"method": "GET",
+				"header": [],
+				"url": {
+					"raw": "{{baseURL}}/debug/raw-prediction",
+					"host": [
+						"{{baseURL}}"
+					],
+					"path": [
+						"debug",
+						"raw-prediction"
+					]
+				}
+			},
+			"response": []
+		},
+		{
+			"name": "Debug Multi Model Detailed",
+			"request": {
+				"method": "POST",
+				"header": [],
+				"url": {
+					"raw": "{{baseURL}}/debug/multi-model-detailed",
+					"host": [
+						"{{baseURL}}"
+					],
+					"path": [
+						"debug",
+						"multi-model-detailed"
+					]
+				}
+			},
+			"response": []
+		},
+		{
+			"name": "Debug Classes",
+			"request": {
+				"method": "GET",
+				"header": [],
+				"url": {
+					"raw": "{{baseURL}}/debug/classess",
+					"host": [
+						"{{baseURL}}"
+					],
+					"path": [
+						"debug",
+						"classess"
+					]
+				}
+			},
+			"response": []
+		},
+		{
+			"name": "Debug Model Predictions",
+			"request": {
+				"method": "GET",
+				"header": [],
+				"url": {
+					"raw": "{{baseURL}}/debug/classess",
+					"host": [
+						"{{baseURL}}"
+					],
+					"path": [
+						"debug",
+						"classess"
+					]
+				}
+			},
+			"response": []
+		},
+		{
+			"name": "Debug Download",
 			"request": {
 				"method": "GET",
 				"header": [],

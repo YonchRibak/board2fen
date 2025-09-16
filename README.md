@@ -152,6 +152,22 @@ This work builds upon recent research in end-to-end chess recognition, particula
 
 ---
 
+## About the Author
+
+This project was developed by **Jonathan Ribak**, a fullstack developer and data scientist, as a final project for the Data Science course at John Bryce Academy.
+
+Jonathan combines expertise in software development with machine learning and computer vision techniques to explore practical applications of AI in real-world scenarios. This chess position recognition project demonstrates the integration of modern deep learning approaches with traditional computer vision pipelines, showcasing both the technical challenges and practical considerations involved in deploying machine learning systems.
+
+**Background:**
+- Fullstack Developer with experience in end-to-end application development
+- Data Scientist specializing in computer vision and machine learning applications
+- Student at John Bryce Academy's Data Science program
+
+**Project Focus:**
+This work represents an exploration of comparative methodologies in computer vision, specifically examining the trade-offs between end-to-end deep learning approaches and traditional pipeline-based systems in challenging real-world recognition tasks.
+
+---
+
 ## Local Setup Instructions
 
 ### Prerequisites
@@ -188,6 +204,7 @@ Navigate to the custom component directory and start the development server:
 
 ```bash
 cd streamlit_ui/my_component/frontend
+npm install
 npm run start
 ```
 
