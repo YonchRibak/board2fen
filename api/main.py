@@ -218,7 +218,7 @@ def get_client_ip(request: Request) -> str:
 
 
 # ============================================================================
-# API ENDPOINTS (SAME INTERFACE, NEW MODULAR BACKEND)
+# API ENDPOINTS
 # ============================================================================
 
 @app.get("/", response_model=RootResponse)
@@ -426,236 +426,6 @@ async def predict_chess_position(
             message=f"Internal error: {str(e)}"
         )
 
-
-# ============================================================================
-# UPDATED DEBUG ENDPOINTS FOR MODULAR ARCHITECTURE
-# ============================================================================
-
-@app.get("/debug/service-info")
-async def debug_service_info():
-    """Debug endpoint to get information about the current service"""
-    if not chess_service:
-        return {"error": "No chess service initialized"}
-
-    return {
-        "service_info": chess_service.get_service_info(),
-        "available_services": ServiceFactory.get_available_services(),
-        "selected_service_type": settings.chess_service_type,
-        "service_config": settings.get_service_config()
-    }
-
-
-@app.get("/debug/raw-prediction")
-async def debug_raw_prediction():
-    """Debug raw model predictions (only works for end-to-end service)"""
-    import numpy as np
-
-    if not chess_service or not chess_service.is_ready():
-        return {"error": "Service not loaded"}
-
-    if chess_service.service_type != "EndToEndPipelineService":
-        return {
-            "error": f"Raw prediction debug only available for end-to-end service, current: {chess_service.service_type}"}
-
-    try:
-        # Create a test input that should produce clear predictions
-        test_input = np.random.random((1, 256, 256, 3)).astype(np.float32)
-
-        # Get raw model output (access the model directly for end-to-end service)
-        raw_prediction = chess_service.model.predict(test_input, verbose=0)
-
-        # Analyze the output
-        debug_info = {
-            "model_output_shape": raw_prediction.shape,
-            "output_range": [float(raw_prediction.min()), float(raw_prediction.max())],
-            "output_mean": float(raw_prediction.mean()),
-            "output_std": float(raw_prediction.std()),
-            "piece_classes": chess_service.piece_classes,
-            "num_classes": len(chess_service.piece_classes),
-            "squares_analysis": []
-        }
-
-        # Analyze first 8 squares in detail
-        for i in range(min(8, 64)):
-            square_probs = raw_prediction[0, i]  # Shape should be (13,)
-            predicted_class = int(np.argmax(square_probs))
-            max_confidence = float(square_probs[predicted_class])
-
-            # Get class name
-            class_name = chess_service.piece_classes[predicted_class] if predicted_class < len(
-                chess_service.piece_classes) else "unknown"
-
-            square_analysis = {
-                "square_index": i,
-                "square_position": f"{chr(ord('a') + (i % 8))}{8 - (i // 8)}",  # e.g., 'a8', 'b8', etc.
-                "predicted_class_index": predicted_class,
-                "predicted_class_name": class_name,
-                "confidence": max_confidence,
-                "all_probabilities": [float(p) for p in square_probs],
-                "piece_symbol": chess_service._piece_name_to_symbol(class_name) if hasattr(chess_service,
-                                                                                           '_piece_name_to_symbol') else "N/A"
-            }
-
-            debug_info["squares_analysis"].append(square_analysis)
-
-        return debug_info
-
-    except Exception as e:
-        import traceback
-        return {
-            "error": str(e),
-            "traceback": traceback.format_exc()
-        }
-
-
-@app.post("/debug/predict-detailed")
-async def debug_predict_detailed(file: UploadFile = File(...)):
-    """Upload an image and get detailed prediction analysis"""
-
-    if not chess_service or not chess_service.is_ready():
-        return {"error": "Service not loaded"}
-
-    try:
-        image_bytes = await file.read()
-
-        # Get basic prediction first
-        prediction_result = chess_service.predict_from_image(image_bytes)
-
-        debug_info = {
-            "service_type": chess_service.service_type,
-            "service_config": chess_service.config,
-            "prediction_result": {
-                "success": prediction_result.success,
-                "fen": prediction_result.fen,
-                "confidence": prediction_result.confidence,
-                "board_detected": prediction_result.board_detected,
-                "board_matrix": prediction_result.board_matrix,
-                "error_message": prediction_result.error_message,
-                "processing_steps": prediction_result.processing_steps
-            }
-        }
-
-        return debug_info
-
-    except Exception as e:
-        import traceback
-        return {
-            "error": str(e),
-            "traceback": traceback.format_exc()
-        }
-
-
-@app.post("/debug/multi-model-detailed")
-async def debug_multi_model_detailed(file: UploadFile = File(...)):
-    """Debug endpoint specifically for multi-model pipeline issues"""
-
-    if not chess_service or chess_service.service_type != "MultiModelPipelineService":
-        return {"error": "Multi-model service not active"}
-
-    try:
-        image_bytes = await file.read()
-        image = ImageProcessor.load_image_from_bytes(image_bytes)
-
-        if image is None:
-            return {"error": "Failed to load image"}
-
-        debug_info = {
-            "image_shape": image.shape,
-            "service_config": chess_service.config
-        }
-
-        # Step 1: Board detection
-        corners, seg_confidence, mask = chess_service._detect_board_with_segmentation(image)
-        debug_info["board_detection"] = {
-            "corners_found": corners is not None,
-            "segmentation_confidence": seg_confidence,
-            "corners": corners
-        }
-
-        if not corners:
-            return {"error": "Board not detected", "debug_info": debug_info}
-
-        # Step 2: Piece detection (CRITICAL STEP)
-        original_pieces = chess_service._detect_pieces(image)
-        debug_info["piece_detection"] = {
-            "pieces_found": len(original_pieces),
-            "pieces_details": original_pieces[:10]  # First 10 pieces for debugging
-        }
-
-        # Step 3: Board warping
-        warped_board, transform_matrix, final_corners = chess_service._warp_board_from_mask(
-            image, mask, corners
-        )
-
-        debug_info["board_warping"] = {
-            "warp_successful": warped_board is not None,
-            "warped_shape": warped_board.shape if warped_board is not None else None,
-            "transform_matrix_exists": transform_matrix is not None
-        }
-
-        if warped_board is None:
-            return {"error": "Board warping failed", "debug_info": debug_info}
-
-        # Step 4: Transform pieces to warped space
-        warped_pieces = chess_service._transform_pieces_to_warped_space(
-            original_pieces, transform_matrix, warped_board.shape[:2]
-        )
-
-        debug_info["coordinate_transformation"] = {
-            "original_pieces": len(original_pieces),
-            "warped_pieces": len(warped_pieces),
-            "warped_pieces_details": warped_pieces[:10]
-        }
-
-        # Step 5: Assign pieces to squares
-        board_matrix = chess_service._assign_pieces_to_squares(warped_pieces)
-
-        pieces_on_board = sum(1 for row in board_matrix for cell in row if cell != '')
-        debug_info["piece_assignment"] = {
-            "pieces_assigned": pieces_on_board,
-            "board_matrix": board_matrix
-        }
-
-        # Test with lower thresholds
-        debug_info["threshold_analysis"] = {}
-
-        # Try with very low confidence threshold
-        low_confidence_pieces = []
-        try:
-            results = chess_service.pieces_model(image, conf=0.1, iou=0.3)  # Much lower thresholds
-            for result in results:
-                boxes = result.boxes
-                if boxes is not None:
-                    for box in boxes:
-                        piece_info = {
-                            'x_center': float(box.xywh[0][0]),
-                            'y_center': float(box.xywh[0][1]),
-                            'confidence': float(box.conf[0]),
-                            'category_id': int(box.cls[0])
-                        }
-                        if hasattr(result, 'names') and piece_info['category_id'] in result.names:
-                            piece_info['class_name'] = result.names[piece_info['category_id']]
-                        low_confidence_pieces.append(piece_info)
-
-            debug_info["threshold_analysis"]["low_threshold_pieces"] = {
-                "count": len(low_confidence_pieces),
-                "pieces": low_confidence_pieces[:15]  # First 15
-            }
-        except Exception as e:
-            debug_info["threshold_analysis"]["error"] = str(e)
-
-        return debug_info
-
-    except Exception as e:
-        import traceback
-        return {
-            "error": str(e),
-            "traceback": traceback.format_exc()
-        }
-
-# ============================================================================
-# REMAINING ENDPOINTS (UNCHANGED)
-# ============================================================================
 
 @app.post("/predict/correct", response_model=CorrectionResponse)
 async def submit_correction(
@@ -927,6 +697,231 @@ async def validate_fen_notation(fen: str):
             error=f"FEN validation error: {str(e)}"
         )
 
+# ============================================================================
+# DEBUG ENDPOINTS
+# ============================================================================
+
+@app.get("/debug/service-info")
+async def debug_service_info():
+    """Debug endpoint to get information about the current service"""
+    if not chess_service:
+        return {"error": "No chess service initialized"}
+
+    return {
+        "service_info": chess_service.get_service_info(),
+        "available_services": ServiceFactory.get_available_services(),
+        "selected_service_type": settings.chess_service_type,
+        "service_config": settings.get_service_config()
+    }
+
+
+@app.get("/debug/raw-prediction")
+async def debug_raw_prediction():
+    """Debug raw model predictions (only works for end-to-end service)"""
+    import numpy as np
+
+    if not chess_service or not chess_service.is_ready():
+        return {"error": "Service not loaded"}
+
+    if chess_service.service_type != "EndToEndPipelineService":
+        return {
+            "error": f"Raw prediction debug only available for end-to-end service, current: {chess_service.service_type}"}
+
+    try:
+        # Create a test input that should produce clear predictions
+        test_input = np.random.random((1, 256, 256, 3)).astype(np.float32)
+
+        # Get raw model output (access the model directly for end-to-end service)
+        raw_prediction = chess_service.model.predict(test_input, verbose=0)
+
+        # Analyze the output
+        debug_info = {
+            "model_output_shape": raw_prediction.shape,
+            "output_range": [float(raw_prediction.min()), float(raw_prediction.max())],
+            "output_mean": float(raw_prediction.mean()),
+            "output_std": float(raw_prediction.std()),
+            "piece_classes": chess_service.piece_classes,
+            "num_classes": len(chess_service.piece_classes),
+            "squares_analysis": []
+        }
+
+        # Analyze first 8 squares in detail
+        for i in range(min(8, 64)):
+            square_probs = raw_prediction[0, i]  # Shape should be (13,)
+            predicted_class = int(np.argmax(square_probs))
+            max_confidence = float(square_probs[predicted_class])
+
+            # Get class name
+            class_name = chess_service.piece_classes[predicted_class] if predicted_class < len(
+                chess_service.piece_classes) else "unknown"
+
+            square_analysis = {
+                "square_index": i,
+                "square_position": f"{chr(ord('a') + (i % 8))}{8 - (i // 8)}",  # e.g., 'a8', 'b8', etc.
+                "predicted_class_index": predicted_class,
+                "predicted_class_name": class_name,
+                "confidence": max_confidence,
+                "all_probabilities": [float(p) for p in square_probs],
+                "piece_symbol": chess_service._piece_name_to_symbol(class_name) if hasattr(chess_service,
+                                                                                           '_piece_name_to_symbol') else "N/A"
+            }
+
+            debug_info["squares_analysis"].append(square_analysis)
+
+        return debug_info
+
+    except Exception as e:
+        import traceback
+        return {
+            "error": str(e),
+            "traceback": traceback.format_exc()
+        }
+
+
+@app.post("/debug/predict-detailed")
+async def debug_predict_detailed(file: UploadFile = File(...)):
+    """Upload an image and get detailed prediction analysis"""
+
+    if not chess_service or not chess_service.is_ready():
+        return {"error": "Service not loaded"}
+
+    try:
+        image_bytes = await file.read()
+
+        # Get basic prediction first
+        prediction_result = chess_service.predict_from_image(image_bytes)
+
+        debug_info = {
+            "service_type": chess_service.service_type,
+            "service_config": chess_service.config,
+            "prediction_result": {
+                "success": prediction_result.success,
+                "fen": prediction_result.fen,
+                "confidence": prediction_result.confidence,
+                "board_detected": prediction_result.board_detected,
+                "board_matrix": prediction_result.board_matrix,
+                "error_message": prediction_result.error_message,
+                "processing_steps": prediction_result.processing_steps
+            }
+        }
+
+        return debug_info
+
+    except Exception as e:
+        import traceback
+        return {
+            "error": str(e),
+            "traceback": traceback.format_exc()
+        }
+
+
+@app.post("/debug/multi-model-detailed")
+async def debug_multi_model_detailed(file: UploadFile = File(...)):
+    """Debug endpoint specifically for multi-model pipeline issues"""
+
+    if not chess_service or chess_service.service_type != "MultiModelPipelineService":
+        return {"error": "Multi-model service not active"}
+
+    try:
+        image_bytes = await file.read()
+        image = ImageProcessor.load_image_from_bytes(image_bytes)
+
+        if image is None:
+            return {"error": "Failed to load image"}
+
+        debug_info = {
+            "image_shape": image.shape,
+            "service_config": chess_service.config
+        }
+
+        # Step 1: Board detection
+        corners, seg_confidence, mask = chess_service._detect_board_with_segmentation(image)
+        debug_info["board_detection"] = {
+            "corners_found": corners is not None,
+            "segmentation_confidence": seg_confidence,
+            "corners": corners
+        }
+
+        if not corners:
+            return {"error": "Board not detected", "debug_info": debug_info}
+
+        # Step 2: Piece detection (CRITICAL STEP)
+        original_pieces = chess_service._detect_pieces(image)
+        debug_info["piece_detection"] = {
+            "pieces_found": len(original_pieces),
+            "pieces_details": original_pieces[:10]  # First 10 pieces for debugging
+        }
+
+        # Step 3: Board warping
+        warped_board, transform_matrix, final_corners = chess_service._warp_board_from_mask(
+            image, mask, corners
+        )
+
+        debug_info["board_warping"] = {
+            "warp_successful": warped_board is not None,
+            "warped_shape": warped_board.shape if warped_board is not None else None,
+            "transform_matrix_exists": transform_matrix is not None
+        }
+
+        if warped_board is None:
+            return {"error": "Board warping failed", "debug_info": debug_info}
+
+        # Step 4: Transform pieces to warped space
+        warped_pieces = chess_service._transform_pieces_to_warped_space(
+            original_pieces, transform_matrix, warped_board.shape[:2]
+        )
+
+        debug_info["coordinate_transformation"] = {
+            "original_pieces": len(original_pieces),
+            "warped_pieces": len(warped_pieces),
+            "warped_pieces_details": warped_pieces[:10]
+        }
+
+        # Step 5: Assign pieces to squares
+        board_matrix = chess_service._assign_pieces_to_squares(warped_pieces)
+
+        pieces_on_board = sum(1 for row in board_matrix for cell in row if cell != '')
+        debug_info["piece_assignment"] = {
+            "pieces_assigned": pieces_on_board,
+            "board_matrix": board_matrix
+        }
+
+        # Test with lower thresholds
+        debug_info["threshold_analysis"] = {}
+
+        # Try with very low confidence threshold
+        low_confidence_pieces = []
+        try:
+            results = chess_service.pieces_model(image, conf=0.1, iou=0.3)  # Much lower thresholds
+            for result in results:
+                boxes = result.boxes
+                if boxes is not None:
+                    for box in boxes:
+                        piece_info = {
+                            'x_center': float(box.xywh[0][0]),
+                            'y_center': float(box.xywh[0][1]),
+                            'confidence': float(box.conf[0]),
+                            'category_id': int(box.cls[0])
+                        }
+                        if hasattr(result, 'names') and piece_info['category_id'] in result.names:
+                            piece_info['class_name'] = result.names[piece_info['category_id']]
+                        low_confidence_pieces.append(piece_info)
+
+            debug_info["threshold_analysis"]["low_threshold_pieces"] = {
+                "count": len(low_confidence_pieces),
+                "pieces": low_confidence_pieces[:15]  # First 15
+            }
+        except Exception as e:
+            debug_info["threshold_analysis"]["error"] = str(e)
+
+        return debug_info
+
+    except Exception as e:
+        import traceback
+        return {
+            "error": str(e),
+            "traceback": traceback.format_exc()
+        }
 
 # ============================================================================
 # ERROR HANDLERS

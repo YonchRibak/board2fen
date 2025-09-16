@@ -395,7 +395,7 @@ class FENValidator:
 
 
 # ============================================================================
-# CHESS PIPELINE SERVICE (UPDATED FOR URL SUPPORT)
+# CHESS PIPELINE SERVICE
 # ============================================================================
 
 class ChessPipelineService:
