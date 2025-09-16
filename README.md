@@ -133,8 +133,8 @@ This approach particularly benefits the end-to-end model, as it only requires po
 
 ### Notebooks
 
-- **[End-to-End Approach Notebook](./notebooks/end_to_end_approach.ipynb)** - Implementation and training of the CNN-based position recognition model
-- **[Pipeline Approach Notebook](./notebooks/pipeline_approach.ipynb)** - Implementation of the YOLO-based detection and warping pipeline
+- **[End-to-End Approach Notebook](https://www.kaggle.com/code/jonathanribak/chess-board-recognition-end-to-end-chessred-datas)** - Implementation and training of the CNN-based position recognition model
+- **[Pipeline Approach Notebook](https://www.kaggle.com/code/jonathanribak/chess-board-recognition-pipeline-chessred-dataset)** - Implementation of the YOLO-based detection and warping pipeline
 
 ### Data Format
 
