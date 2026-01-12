@@ -36,9 +36,6 @@ COPY --from=builder /install /usr/local
 # Copy your application code (ensure api/ and utils/ are NOT in .dockerignore)
 COPY . .
 
-# Set working directory to where main.py is
-WORKDIR /app/api
-
 EXPOSE 8000
 
-CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["uvicorn", "api.main:app", "--host", "0.0.0.0", "--port", "8000"]
