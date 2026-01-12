@@ -1,22 +1,25 @@
-# Python
+# Build Artifacts
 __pycache__/
 *.pyc
 *.pyo
 *.pyd
 .venv/
-env/
 venv/
+env/
 
-# Git / IDE
+# Data & Large Folders (The "Size Killers")
+legacy/
+notebooks/
+outputs/
+end2end_board_classifier_new_data/
+streamlit_ui/
+
+# Dev/IDE
 .git/
 .gitignore
 .vscode/
 .idea/
-legacy/
-notebooks/
-outputs/
-utils/
-end2end_board_classifier_new_data/
-streamlit_ui/
+
+# Specific Files
 api/tests/
 api/BOARD2FEN API.postman_collection.json
