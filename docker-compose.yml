@@ -1,0 +1,37 @@
+services:
+  db:
+    image: postgres:15
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-chessdb}
+      POSTGRES_USER: ${POSTGRES_USER:-chessuser}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-chesspass}
+    ports:
+      - "5434:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U chessuser -d chessdb"]
+      interval: 5s
+      timeout: 10s
+      retries: 10
+      start_period: 30s  # Give it time to initialize
+
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      ENVIRONMENT: development
+      DATABASE_URL: postgresql+psycopg2://${POSTGRES_USER:-chessuser}:${POSTGRES_PASSWORD:-chesspass}@db:5432/${POSTGRES_DB:-chessdb}
+    ports:
+      - "8081:8000"
+    volumes:
+      - ./outputs:/app/outputs
+      - ./api:/app/api
+    restart: unless-stopped  # Auto-restart if it fails
+
+volumes:
+  pgdata:
