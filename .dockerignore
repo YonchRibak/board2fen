@@ -7,19 +7,39 @@ __pycache__/
 venv/
 env/
 
-# Data & Large Folders (The "Size Killers")
+# Data & Large Folders (NOT needed for API deployment)
 legacy/
 notebooks/
 outputs/
 end2end_board_classifier_new_data/
 streamlit_ui/
+utils/
+
+# Duplicate weights (api/weights/ has the same files)
+weights/
+
+# Model cache (models are downloaded from GCS at runtime)
+api/model_cache/
+
+# Development databases
+*.db
+chess_predictions.db
 
 # Dev/IDE
 .git/
 .gitignore
 .vscode/
 .idea/
+*.md
+.env
+.env.example
 
-# Specific Files
+# Test files and debug tools
 api/tests/
 api/BOARD2FEN API.postman_collection.json
+
+# Fly.io config (not needed for Sevalla)
+fly.toml
+
+# Docker compose (local dev only)
+docker-compose.yml
