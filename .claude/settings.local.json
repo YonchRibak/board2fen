@@ -3,7 +3,14 @@
     "allow": [
       "Bash(powershell -Command \"[System.IO.File]::WriteAllText\\(''.gitignore'', @''\n.ipynb_checkpoints/\n__pycache__/\n*.pyc\nvenv/\nlegacy/\n/end2end_board_classifier_new_data/\n/outputs/\n/streamlit_ui/my_component/frontend/node_modules/\n\n# IDE\n.idea/\n.vscode/\n*.swp\n\n# Database\n*.db\n\n# Weights/models\nweights/\n\n# Environment\n.env\n''@, [System.Text.Encoding]::UTF8\\)\")",
       "Bash(powershell -Command \"$content = @''\n.ipynb_checkpoints/\n__pycache__/\n*.pyc\nvenv/\nlegacy/\n/end2end_board_classifier_new_data/\n/outputs/\n/streamlit_ui/my_component/frontend/node_modules/\n\n# IDE\n.idea/\n.vscode/\n*.swp\n\n# Database\n*.db\n\n# Weights/models\nweights/\n\n# Environment\n.env\n''@; $utf8NoBom = New-Object System.Text.UTF8Encoding $false; [System.IO.File]::WriteAllText\\(''.gitignore'', $content, $utf8NoBom\\)\")",
-      "Bash(powershell -NoProfile -Command \"Set-Content -Path ''.gitignore'' -Value ''.ipynb_checkpoints/\n__pycache__/\n*.pyc\nvenv/\nlegacy/\n/end2end_board_classifier_new_data/\n/outputs/\n/streamlit_ui/my_component/frontend/node_modules/\n\n# IDE\n.idea/\n.vscode/\n*.swp\n\n# Database\n*.db\n\n# Weights/models\nweights/\n\n# Environment\n.env'' -Encoding ASCII\")"
+      "Bash(powershell -NoProfile -Command \"Set-Content -Path ''.gitignore'' -Value ''.ipynb_checkpoints/\n__pycache__/\n*.pyc\nvenv/\nlegacy/\n/end2end_board_classifier_new_data/\n/outputs/\n/streamlit_ui/my_component/frontend/node_modules/\n\n# IDE\n.idea/\n.vscode/\n*.swp\n\n# Database\n*.db\n\n# Weights/models\nweights/\n\n# Environment\n.env'' -Encoding ASCII\")",
+      "Bash(du:*)",
+      "Bash(git -C /c/code/board2fen log --oneline -10)",
+      "Bash(git -C /c/code/board2fen ls-files:*)",
+      "Bash(git -C /c/code/board2fen status --porcelain)",
+      "Bash(git -C /c/code/board2fen log --diff-filter=A --name-only --pretty=format:)",
+      "Bash(iconv:*)",
+      "Bash(powershell -Command:*)"
     ]
   }
 }
