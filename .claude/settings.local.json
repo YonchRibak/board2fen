@@ -10,7 +10,8 @@
       "Bash(git -C /c/code/board2fen status --porcelain)",
       "Bash(git -C /c/code/board2fen log --diff-filter=A --name-only --pretty=format:)",
       "Bash(iconv:*)",
-      "Bash(powershell -Command:*)"
+      "Bash(powershell -Command:*)",
+      "Bash(cmd //c \"del \\\\\\\\?\\\\C:\\\\code\\\\board2fen\\\\api\\\\nul\")"
     ]
   }
 }
